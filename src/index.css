@@ -1,0 +1,372 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: Inter, system-ui, sans-serif;
+    @apply h-full antialiased;
+  }
+
+  body {
+    @apply bg-slate-100 text-slate-900 m-0 h-full overflow-hidden;
+  }
+
+  #root {
+    @apply h-full;
+  }
+}
+
+@layer components {
+  /* Brand utilities (wireframe-inspired) */
+  .brand-header {
+    @apply bg-[#5a5a33] text-white dark:bg-slate-800;
+  }
+
+  .brand-sand {
+    @apply bg-[#d6c08f] dark:bg-slate-900;
+  }
+
+  .brand-tab {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-full border border-white/20 text-white/90
+    hover:bg-white/10 hover:text-white transition-colors;
+  }
+
+  .brand-tab-active {
+    @apply bg-white text-[#5a5a33] dark:bg-white/90 dark:text-slate-900 border-white shadow
+    hover:bg-white hover:text-[#5a5a33];
+  }
+
+  .pill-btn {
+    @apply rounded-full px-5 py-2 font-medium shadow-sm;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 
+    focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2
+    disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200
+    shadow-lg shadow-teal-600/20 hover:shadow-teal-600/30 active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-white text-slate-700 border border-slate-200 rounded-lg
+    hover:bg-slate-50 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500 
+    focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed
+    transition-all duration-200 shadow-sm hover:shadow active:scale-[0.98];
+}
+
+  .input-field {
+    @apply block w-full rounded-lg border-2 border-slate-300 shadow-md bg-white
+    focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 focus:shadow-lg sm:text-sm
+    disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200
+    placeholder:text-slate-400 px-4 py-3 font-medium
+    hover:border-slate-400 hover:shadow-lg;
+}
+
+  .form-label {
+    @apply block text-sm font-medium text-slate-700 mb-1;
+}
+
+  .card {
+    @apply bg-white rounded-xl shadow-sm p-6 border border-slate-200/80
+    hover:shadow-md transition-all duration-200 backdrop-blur-sm
+    bg-white/80;
+  }
+
+  .card-header {
+    @apply flex items-center justify-between mb-4 pb-4 border-b border-slate-200/80;
+  }
+
+  .card-title {
+    @apply text-lg font-semibold text-slate-900;
+  }
+
+  .data-table {
+    @apply min-w-full divide-y divide-slate-200;
+}
+
+  .data-table th {
+    @apply px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider;
+}
+
+  .data-table td {
+    @apply px-6 py-4 whitespace-nowrap text-sm text-slate-900;
+  }
+
+  .data-table tr {
+    @apply hover:bg-slate-50 transition-colors duration-150;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply bg-green-100 text-green-800;
+  }
+
+  .badge-warning {
+    @apply bg-yellow-100 text-yellow-800;
+  }
+
+  .badge-error {
+    @apply bg-red-100 text-red-800;
+  }
+
+  /* Line clamp utilities */
+  .line-clamp-1 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+  }
+
+  .line-clamp-2 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .line-clamp-3 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  /* Gradient utilities */
+  .gradient-blue {
+    @apply bg-gradient-to-r from-blue-500 to-blue-600;
+  }
+
+  .gradient-green {
+    @apply bg-gradient-to-r from-emerald-500 to-emerald-600;
+  }
+
+  .gradient-amber {
+    @apply bg-gradient-to-r from-amber-500 to-amber-600;
+  }
+
+  .gradient-red {
+    @apply bg-gradient-to-r from-red-500 to-red-600;
+  }
+
+  .gradient-purple {
+    @apply bg-gradient-to-r from-purple-500 to-purple-600;
+  }
+
+  .gradient-teal {
+    @apply bg-gradient-to-r from-teal-500 to-teal-600;
+  }
+
+  /* Modern card styles */
+  .modern-card {
+    @apply bg-white rounded-2xl shadow-sm border border-slate-200/50 
+    hover:shadow-lg transition-all duration-300 backdrop-blur-sm;
+  }
+
+  /* Button variations */
+  .btn-gradient-blue {
+    @apply px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white 
+    rounded-xl font-medium hover:from-blue-600 hover:to-blue-700 
+    transition-all duration-200 shadow-lg;
+  }
+
+  .btn-gradient-green {
+    @apply px-6 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white 
+    rounded-xl font-medium hover:from-emerald-600 hover:to-emerald-700 
+    transition-all duration-200 shadow-lg;
+  }
+
+  .btn-outline {
+    @apply px-4 py-2 border-2 border-slate-300 text-slate-600 rounded-xl 
+    hover:border-slate-400 hover:bg-slate-50 transition-all duration-200;
+  }
+
+  /* Aspect ratio utilities */
+  .aspect-w-16 {
+    position: relative;
+    padding-bottom: calc(var(--tw-aspect-h) / var(--tw-aspect-w) * 100%);
+  }
+
+  .aspect-w-16 > * {
+    position: absolute;
+    height: 100%;
+    width: 100%;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+  }
+
+  .aspect-h-9 {
+    --tw-aspect-h: 9;
+  }
+
+  .aspect-w-16 {
+    --tw-aspect-w: 16;
+  }
+}
+
+/* Custom scrollbar */
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  @apply w-1.5 h-1.5;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 hover:bg-slate-400 rounded-full transition-colors duration-200;
+}
+
+/* Transitions */
+.transition-all {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 200ms;
+}
+
+/* Focus styles */
+*:focus-visible {
+  @apply outline-none ring-2 ring-blue-500 ring-offset-2;
+}
+
+/* Glass morphism effects */
+.glass {
+  @apply bg-white/80 backdrop-blur-sm border border-white/20;
+}
+
+.glass-dark {
+  @apply bg-slate-900/80 backdrop-blur-sm border border-slate-700/20;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 200ms ease-out;
+}
+
+.animate-slideInUp {
+  animation: slideInUp 300ms ease-out;
+}
+
+.animate-slideInDown {
+  animation: slideInDown 300ms ease-out;
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Enhanced loading animations */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Modern hover effects */
+.hover-lift {
+  @apply transition-transform duration-200 hover:-translate-y-1;
+}
+
+.hover-scale {
+  @apply transition-transform duration-200 hover:scale-105;
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  .input-field, .btn-primary, .btn-secondary {
+    @apply text-base;
+  }
+
+  .card, .modern-card {
+    @apply rounded-lg p-4;
+  }
+
+  .btn-gradient-blue, .btn-gradient-green {
+    @apply px-4 py-2 text-sm;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .modern-card {
+    @apply border-slate-400;
+  }
+  
+  .btn-gradient-blue, .btn-gradient-green {
+    @apply shadow-none border-2 border-current;
+  }
+
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  
+  .animate-spin {
+    animation: none;
+  }
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  .modern-card {
+    @apply shadow-none border border-slate-300;
+  }
+}

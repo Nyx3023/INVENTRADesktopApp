@@ -1,0 +1,4 @@
+node_modules
+data/pos_inventory.db-shm
+release/
+dist/
