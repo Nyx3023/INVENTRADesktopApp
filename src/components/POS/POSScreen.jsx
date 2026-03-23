@@ -601,7 +601,8 @@ const POSScreen = () => {
     let filtered = products.filter(product => {
       const matchesSearch = !term || product.name.toLowerCase().includes(term);
       const matchesCategory = !selectedCategory || product.category_name === selectedCategory;
-      return matchesSearch && matchesCategory;
+      const isAvailable = product.status !== 'unavailable';
+      return matchesSearch && matchesCategory && isAvailable;
     });
 
     // Prioritize products without barcodes (they appear first)

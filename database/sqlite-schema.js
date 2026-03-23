@@ -49,6 +49,7 @@ export async function initializeDatabase() {
         reorder_point INTEGER NOT NULL DEFAULT 15,
         barcode TEXT,
         image_url TEXT,
+        status TEXT NOT NULL DEFAULT 'available' CHECK(status IN ('available', 'unavailable')),
         deleted_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -159,6 +160,16 @@ export async function initializeDatabase() {
       // Ignore if column already exists
       if (!e.message.includes('duplicate column name')) {
         console.error('Error adding permissions column:', e);
+      }
+    }
+
+    // Ensure status column exists in existing databases
+    try {
+      db.exec(`ALTER TABLE products ADD COLUMN status TEXT NOT NULL DEFAULT 'available';`);
+      console.log('Added status column to products table');
+    } catch (e) {
+      if (!e.message.includes('duplicate column name')) {
+        console.error('Error adding status column:', e);
       }
     }
 

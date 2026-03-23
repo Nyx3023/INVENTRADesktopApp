@@ -73,6 +73,7 @@ const normalizeProduct = async (product) => {
     category: categoryName,
     image_url: rawImage || '',
     imageUrl: resolvedImage || rawImage || '',
+    status: product.status || 'available',
   };
 };
 

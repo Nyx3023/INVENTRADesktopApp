@@ -752,7 +752,7 @@ app.get('/api/products', async (req, res) => {
   try {
     const [rows] = execute(
       'SELECT id, name, description, category_name, price, cost, ' +
-      'quantity, barcode, image_url as imageUrl ' +
+      'quantity, barcode, image_url as imageUrl, status ' +
       'FROM products WHERE deleted_at IS NULL'
     );
     console.log('Products fetched:', rows);
@@ -833,8 +833,8 @@ app.post('/api/products', async (req, res) => {
       `INSERT INTO products (
         id, name, description, category_name, 
         price, cost, quantity,
-        barcode, image_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        barcode, image_url, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         product.name,
@@ -844,7 +844,8 @@ app.post('/api/products', async (req, res) => {
         product.cost || 0,
         product.quantity,
         barcodeValue,
-        product.imageUrl
+        product.imageUrl,
+        product.status || 'available'
       ]
     );
 
@@ -952,7 +953,8 @@ app.put('/api/products/:id', async (req, res) => {
       cost: product.cost || 0,
       quantity: product.quantity || 0,
       barcode: barcodeToCheck,
-      image_url: product.imageUrl || product.image_url || null
+      image_url: product.imageUrl || product.image_url || null,
+      status: product.status || 'available'
     };
 
     console.log('Mapped update data:', updateData);
@@ -966,7 +968,8 @@ app.put('/api/products/:id', async (req, res) => {
         cost = ?,
         quantity = ?,
         barcode = ?,
-        image_url = ?
+        image_url = ?,
+        status = ?
       WHERE id = ?`,
       [
         updateData.name,
@@ -977,6 +980,7 @@ app.put('/api/products/:id', async (req, res) => {
         updateData.quantity,
         updateData.barcode,
         updateData.image_url,
+        updateData.status,
         id
       ]
     );

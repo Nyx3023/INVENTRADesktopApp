@@ -800,7 +800,7 @@ const InventoryScreen = () => {
       <div
         className={`${colors.card.primary} rounded-2xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-500' : colors.border.primary
           } overflow-hidden hover:shadow-lg transition-all duration-300 group relative ${selectedProducts.length > 0 ? 'cursor-pointer' : ''
-          }`}
+          } ${product.status === 'unavailable' ? 'opacity-75' : ''}`}
         onClick={() => {
           if (selectedProducts.length > 0) {
             toggleProductSelection(product.id);
@@ -835,6 +835,15 @@ const InventoryScreen = () => {
           ) : (
             <div className="w-full h-full bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center">
               <CubeIcon className="h-16 w-16 text-slate-400 dark:text-slate-500" />
+            </div>
+          )}
+
+          {/* Unavailable Badge - Top Right of Image */}
+          {product.status === 'unavailable' && (
+            <div className="absolute top-3 right-3 z-20">
+              <span className="px-2.5 py-1 text-xs font-semibold rounded-full shadow-sm bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300">
+                Unavailable
+              </span>
             </div>
           )}
 

@@ -61,7 +61,11 @@ try {
 
 console.log('Step 2: Building Electron win-unpacked...');
 try {
-  execSync('npx electron-builder --win dir --x64', { cwd: rootDir, stdio: 'inherit' });
+  execSync('npx electron-builder --win dir --x64', { 
+    cwd: rootDir, 
+    stdio: 'inherit',
+    env: { ...process.env, USE_HARD_LINKS: 'false' }
+  });
   console.log('✓ Electron package completed\n');
 } catch (error) {
   console.error('ERROR: Electron win-unpacked build failed');

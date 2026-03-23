@@ -40,7 +40,7 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\jbologo.ico
 UninstallDisplayName={#MyAppName}
 
@@ -165,11 +165,41 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   RuntimeDataDir: string;
   SetupIniPath: string;
+  OldRuntimeDataDir: string;
 begin
   if CurStep = ssPostInstall then
   begin
     RuntimeDataDir := ExpandConstant('{userappdata}\INVENTRA\runtime\data');
     ForceDirectories(RuntimeDataDir);
+
+    { Clean up old database and setup files so the app starts fresh }
+    if FileExists(RuntimeDataDir + '\pos_inventory.db') then
+      DeleteFile(RuntimeDataDir + '\pos_inventory.db');
+    if FileExists(RuntimeDataDir + '\pos_inventory.db-wal') then
+      DeleteFile(RuntimeDataDir + '\pos_inventory.db-wal');
+    if FileExists(RuntimeDataDir + '\pos_inventory.db-shm') then
+      DeleteFile(RuntimeDataDir + '\pos_inventory.db-shm');
+    if FileExists(RuntimeDataDir + '\store-info.json') then
+      DeleteFile(RuntimeDataDir + '\store-info.json');
+    if FileExists(RuntimeDataDir + '\setup-state.json') then
+      DeleteFile(RuntimeDataDir + '\setup-state.json');
+
+    { Also clean up old `inventory-management-system` path to avoid leaks from dev/old version }
+    OldRuntimeDataDir := ExpandConstant('{userappdata}\inventory-management-system\runtime\data');
+    if DirExists(OldRuntimeDataDir) then
+    begin
+      if FileExists(OldRuntimeDataDir + '\pos_inventory.db') then
+        DeleteFile(OldRuntimeDataDir + '\pos_inventory.db');
+      if FileExists(OldRuntimeDataDir + '\pos_inventory.db-wal') then
+        DeleteFile(OldRuntimeDataDir + '\pos_inventory.db-wal');
+      if FileExists(OldRuntimeDataDir + '\pos_inventory.db-shm') then
+        DeleteFile(OldRuntimeDataDir + '\pos_inventory.db-shm');
+      if FileExists(OldRuntimeDataDir + '\store-info.json') then
+        DeleteFile(OldRuntimeDataDir + '\store-info.json');
+      if FileExists(OldRuntimeDataDir + '\setup-state.json') then
+        DeleteFile(OldRuntimeDataDir + '\setup-state.json');
+    end;
+
     SetupIniPath := RuntimeDataDir + '\installer-setup.ini';
 
     SetIniString('setup', 'storeName', StoreName, SetupIniPath);

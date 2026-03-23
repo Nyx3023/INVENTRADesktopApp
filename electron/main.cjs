@@ -4,6 +4,9 @@ const { pathToFileURL } = require('url');
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const { ThermalPrinterManager } = require('./printer/thermal-printer.cjs');
 
+// Align app name with productName for directory paths
+app.name = 'INVENTRA';
+
 const DEFAULT_PORT = 3001;
 const isDev = !app.isPackaged;
 const printerManager = new ThermalPrinterManager();
@@ -61,7 +64,11 @@ function parseInstallerIni(rawText) {
     const separatorIndex = line.indexOf('=');
     if (separatorIndex <= 0) continue;
     const key = line.slice(0, separatorIndex).trim();
-    const value = line.slice(separatorIndex + 1).trim();
+    let value = line.slice(separatorIndex + 1).trim();
+    // Remove surrounding quotes if present
+    if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+      value = value.slice(1, -1);
+    }
     result[key] = value;
   }
 
@@ -70,9 +77,12 @@ function parseInstallerIni(rawText) {
 
 async function applyInstallerSetupIfPresent(runtimeDir) {
   const setupIniPath = path.join(runtimeDir, 'data', 'installer-setup.ini');
+  console.log('[Installer Setup] Checking for INI at:', setupIniPath);
   if (!fs.existsSync(setupIniPath)) {
+    console.log('[Installer Setup] No INI file found, skipping.');
     return;
   }
+  console.log('[Installer Setup] INI file found! Applying setup...');
 
   const appUrl = `http://127.0.0.1:${DEFAULT_PORT}`;
   await waitForServer(appUrl);
