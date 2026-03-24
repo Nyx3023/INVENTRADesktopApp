@@ -768,7 +768,8 @@ export const exportProductsToExcel = (products, filename = `Products_Export_${ne
     'Cost Price',
     'Quantity',
     'Barcode',
-    'ProductImage'
+    'ProductImage',
+    'Status'
   ];
 
   mainData.push(headers);
@@ -782,7 +783,8 @@ export const exportProductsToExcel = (products, filename = `Products_Export_${ne
       Number(product.cost || 0).toFixed(2),
       Number(product.quantity || 0),
       product.barcode || '',
-      product.image_url || product.imageUrl || ''
+      product.image_url || product.imageUrl || '',
+      product.status || 'available'
     ];
     mainData.push(row);
   });
@@ -798,7 +800,8 @@ export const exportProductsToExcel = (products, filename = `Products_Export_${ne
     { wch: 15 }, // Cost Price
     { wch: 12 }, // Quantity
     { wch: 20 }, // Barcode
-    { wch: 40 }  // ProductImage
+    { wch: 40 }, // ProductImage
+    { wch: 15 }  // Status
   ];
 
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Products');
@@ -815,11 +818,13 @@ export const exportProductsToExcel = (products, filename = `Products_Export_${ne
     ['Quantity', 'Initial stock quantity (required)'],
     ['Barcode', 'Product barcode (optional)'],
     ['ProductImage', 'Image URL or path (optional)'],
+    ['Status', 'Availability status: available or unavailable (optional, defaults to available)'],
     [''],
     ['Notes:'],
     ['- All prices should be in decimal format (e.g., 99.99)'],
     ['- Quantities and Low Stock Alerts should be whole numbers'],
     ['- ProductImage can be a URL or relative path to uploaded image'],
+    ['- Status must be strictly "available" or "unavailable"'],
     ['- Empty rows will be skipped during import'],
     ['- Duplicate barcodes will be skipped']
   ];
@@ -976,7 +981,8 @@ export const importProductsFromExcel = async (file, existingProducts = []) => {
           costPrice: -1,
           quantity: -1,
           barcode: -1,
-          productImage: -1
+          productImage: -1,
+          status: -1
         };
 
         // Map headers - prioritize exact matches from export format, then flexible matching
@@ -999,6 +1005,8 @@ export const importProductsFromExcel = async (file, existingProducts = []) => {
             columnMap.barcode = index;
           } else if (headerTrimmed === 'ProductImage' || headerLower === 'productimage') {
             columnMap.productImage = index;
+          } else if (headerTrimmed === 'Status' || headerLower === 'status') {
+            columnMap.status = index;
           }
           // Flexible matching for user-modified headers (only if exact match not found)
           else if (columnMap.prodName === -1 && (headerLower.includes('product name') || (headerLower.includes('name') && !headerLower.includes('image')))) {
@@ -1015,6 +1023,8 @@ export const importProductsFromExcel = async (file, existingProducts = []) => {
             columnMap.barcode = index;
           } else if (columnMap.productImage === -1 && headerLower.includes('image')) {
             columnMap.productImage = index;
+          } else if (columnMap.status === -1 && (headerLower.includes('status') || headerLower.includes('available'))) {
+            columnMap.status = index;
           }
         });
 
@@ -1066,6 +1076,8 @@ export const importProductsFromExcel = async (file, existingProducts = []) => {
           const quantity = String(row[columnMap.quantity] || '').trim();
           const barcode = columnMap.barcode !== -1 ? String(row[columnMap.barcode] || '').trim() : '';
           const productImage = columnMap.productImage !== -1 ? String(row[columnMap.productImage] || '').trim() : '';
+          const statusRaw = columnMap.status !== -1 ? String(row[columnMap.status] || '').trim().toLowerCase() : 'available';
+          const statusValue = (statusRaw === 'unavailable' || statusRaw === 'not available') ? 'unavailable' : 'available';
 
           // Validate required fields
           const rowErrors = [];
@@ -1171,6 +1183,7 @@ export const importProductsFromExcel = async (file, existingProducts = []) => {
             quantity: qtyNum,
             barcode: barcode || null,
             image_url: productImage || null,
+            status: statusValue,
             _excelRow: i + 1 // Store Excel row number for reference
           };
 
@@ -1220,7 +1233,8 @@ export const downloadImportTemplate = (filename = 'Import_Products_Template.xlsx
     'Cost Price',
     'Quantity',
     'Barcode',
-    'ProductImage'
+    'ProductImage',
+    'Status'
   ];
 
   const worksheet = XLSX.utils.aoa_to_sheet([headers]);
@@ -1231,7 +1245,8 @@ export const downloadImportTemplate = (filename = 'Import_Products_Template.xlsx
     { wch: 15 }, // Cost Price
     { wch: 12 }, // Quantity
     { wch: 20 }, // Barcode
-    { wch: 40 }  // ProductImage
+    { wch: 40 }, // ProductImage
+    { wch: 15 }  // Status
   ];
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Products');
 
@@ -1247,13 +1262,14 @@ export const downloadImportTemplate = (filename = 'Import_Products_Template.xlsx
     ['Quantity', 'Initial stock quantity (required)'],
     ['Barcode', 'Product barcode (optional)'],
     ['ProductImage', 'Image URL or path (optional)'],
+    ['Status', 'Availability status: available or unavailable (optional, defaults to available)'],
     [''],
     ['Notes:'],
     ['- All prices should be in decimal format (e.g., 99.99)'],
-    ['- Quantities should be whole numbers'],
+    ['- Quantities and Low Stock Alerts should be whole numbers'],
     ['- ProductImage can be a URL or relative path to uploaded image'],
-    ['- Empty rows will be skipped during import'],
-    ['- Duplicate barcodes will be skipped']
+    ['- Status must be strictly "available" or "unavailable"'],
+    ['- Empty rows will be skipped during import']
   ];
 
   const instructionsSheet = XLSX.utils.aoa_to_sheet(instructionsData);

@@ -99,6 +99,7 @@ const InventoryScreen = () => {
   const [stockMode, setStockMode] = useState(false);
   const [stockModeQty, setStockModeQty] = useState(1);
   const [stockModeBarcode, setStockModeBarcode] = useState('');
+  const [pendingStockScans, setPendingStockScans] = useState({}); // Stores staged scans { [productId]: totalQtyScanned }
   const stockModeBarcodeRef = useRef(null);
   const stockModeLastScan = useRef(null);
 
@@ -144,13 +145,6 @@ const InventoryScreen = () => {
 
   useEffect(() => {
     loadProducts();
-
-    // Set up real-time monitoring - refresh every 2 minutes instead of 30 seconds
-    const interval = setInterval(() => {
-      loadProducts();
-    }, 120000); // 2 minutes
-
-    return () => clearInterval(interval);
   }, [loadProducts]);
 
   const handleAddProduct = async (productData) => {
@@ -393,7 +387,7 @@ const InventoryScreen = () => {
     }
   };
 
-  // Stock Mode: Handle barcode scan to add quantity
+  // Stock Mode: Handle barcode scan to stage quantity
   const handleStockModeBarcodeScan = async (barcode) => {
     if (!barcode || !stockMode) return;
 
@@ -408,41 +402,22 @@ const InventoryScreen = () => {
     const product = safeProducts.find(p => p.barcode === barcode);
 
     if (product) {
-      // Product found - add quantity using FIFO batches
+      // Product found - stage the quantity
       const qty = Math.max(1, parseInt(stockModeQty, 10) || 1);
 
-      try {
-        // Add stock directly - ensure numeric addition
-        const currentQty = Number(product.quantity) || 0;
-        const newQuantity = currentQty + qty;
-        await productService.update(product.id, {
-          ...product,
-          quantity: newQuantity,
-        });
+      setPendingStockScans(prev => ({
+        ...prev,
+        [product.id]: (prev[product.id] || 0) + qty
+      }));
 
-        // Log the adjustment automatically
-        await stockAdjustmentService.create({
-          productId: product.id,
-          adjustmentType: 'physical_count',
-          newQuantity: newQuantity,
-          reason: 'Stock Mode entry',
-          notes: 'Added via barcode scanner in Stock Mode'
-        });
-
-        toast.success(
-          <div>
-            <strong>+{qty}</strong> added to <strong>{product.name}</strong>
-            <br />
-            <span className="text-sm opacity-75">New stock: {newQuantity}</span>
-          </div>,
-          { duration: 2000 }
-        );
-
-        await loadProducts();
-      } catch (e) {
-        console.error('Error updating stock:', e);
-        toast.error(e.message || 'Failed to update stock');
-      }
+      toast.success(
+        <div>
+          <strong>+{qty}</strong> staged for <strong>{product.name}</strong>
+          <br />
+          <span className="text-sm opacity-75">Click 'Save Scans' when done.</span>
+        </div>,
+        { duration: 2000 }
+      );
     } else {
       // Product not found - open add product modal with barcode prefilled
       setPrefilledBarcode(barcode);
@@ -466,19 +441,63 @@ const InventoryScreen = () => {
     }
   };
 
-  // Toggle stock mode
-  const toggleStockMode = () => {
-    setStockMode(!stockMode);
-    if (!stockMode) {
-      // Entering stock mode - focus the barcode input
+  // Toggle stock mode and save batched scans
+  const toggleStockMode = async () => {
+    if (stockMode) {
+      // Exiting stock mode - save pending scans if any
+      const stagedIds = Object.keys(pendingStockScans);
+      if (stagedIds.length > 0) {
+        setIsLoading(true);
+        try {
+          let totalAdded = 0;
+          for (const productId of stagedIds) {
+            const qty = pendingStockScans[productId];
+            const product = safeProducts.find(p => p.id === productId);
+            if (!product) continue;
+            
+            const currentQty = Number(product.quantity) || 0;
+            const newQuantity = currentQty + qty;
+
+            await productService.update(product.id, {
+              ...product,
+              quantity: newQuantity,
+            });
+
+            await stockAdjustmentService.create({
+              productId: product.id,
+              adjustmentType: 'physical_count',
+              newQuantity: newQuantity,
+              reason: 'Stock Mode entry',
+              notes: 'Added via barcode scanner in Stock Mode (Batched)',
+              // Use the active user object accurately instead of fallback to 'System'
+              adjustedBy: user?.name,
+              adjustedById: user?.id
+            });
+            totalAdded += qty;
+          }
+          toast.success(`Successfully saved ${totalAdded} items to stock!`, { duration: 3000, icon: '✅' });
+          setPendingStockScans({});
+          await loadProducts();
+        } catch (e) {
+          console.error('Error saving batched stock:', e);
+          toast.error('Failed to save some stock items: ' + e.message);
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        toast('Stock Mode disabled without changes', { duration: 2000 });
+      }
+      setStockMode(false);
+    } else {
+      // Entering stock mode
+      setStockMode(true);
+      // focus the barcode input
       setTimeout(() => {
         if (stockModeBarcodeRef.current) {
           stockModeBarcodeRef.current.focus();
         }
       }, 100);
-      toast.success('Stock Mode enabled! Scan barcodes to add quantity.', { duration: 3000, icon: '📦' });
-    } else {
-      toast('Stock Mode disabled', { duration: 2000 });
+      toast.success('Stock Mode enabled! Scan barcodes to stage items.', { duration: 3000, icon: '📦' });
     }
   };
 
@@ -1240,13 +1259,19 @@ const InventoryScreen = () => {
               <button
                 onClick={toggleStockMode}
                 className={`px-4 py-2 rounded-xl font-medium transition-all duration-200 flex items-center space-x-2 ${stockMode
-                  ? 'bg-green-600 text-white hover:bg-green-700'
+                  ? 'bg-green-600 text-white hover:bg-green-700 shadow-md'
                   : `${colors.bg.tertiary} ${colors.text.secondary} hover:${colors.text.primary}`
                   }`}
-                title="Stock Mode - Scan barcodes to quickly add stock"
+                title={stockMode ? "Save and exit Stock Mode" : "Stock Mode - Scan barcodes to quickly stage stock"}
               >
-                <QrCodeIcon className="h-5 w-5" />
-                <span>Stock Mode</span>
+                {stockMode ? <CheckCircleIcon className="h-5 w-5" /> : <QrCodeIcon className="h-5 w-5" />}
+                <span>
+                  {stockMode && Object.keys(pendingStockScans).length > 0 
+                    ? `Save Scans (${Object.values(pendingStockScans).reduce((a, b) => a + b, 0)})` 
+                    : stockMode 
+                      ? 'Exit Stock Mode' 
+                      : 'Stock Mode'}
+                </span>
               </button>
             )}
 

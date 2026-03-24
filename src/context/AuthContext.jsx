@@ -39,7 +39,7 @@ export const AuthProvider = ({ children }) => {
 
         // Log automatic login via remember me
         try {
-          activityLogService.log({
+          activityLogService.create({
             userId: parsedUser.id,
             userName: parsedUser.name,
             userEmail: parsedUser.email,

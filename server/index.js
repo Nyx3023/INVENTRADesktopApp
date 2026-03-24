@@ -2787,12 +2787,31 @@ const createAutoBackup = async () => {
   const { dbPath, uploadsPath } = getBackupPaths();
   const zip = new AdmZip();
 
-  if (fs.existsSync(dbPath)) {
-    zip.addLocalFile(dbPath, 'database');
-  }
+  // Create temporary directory for stripping users
+  const tempDir = path.join(process.cwd(), 'data', `temp_backup_auto_${Date.now()}`);
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+  const tempDbPath = path.join(tempDir, 'pos_inventory.db');
 
-  if (fs.existsSync(uploadsPath)) {
-    zip.addLocalFolder(uploadsPath, 'uploads');
+  try {
+    if (fs.existsSync(dbPath)) {
+      await db.backup(tempDbPath);
+      const { default: Database } = await import('better-sqlite3');
+      const tempDb = new Database(tempDbPath);
+      tempDb.exec('DELETE FROM users');
+      tempDb.close();
+      zip.addLocalFile(tempDbPath, 'database');
+    }
+
+    if (fs.existsSync(uploadsPath)) {
+      zip.addLocalFolder(uploadsPath, 'uploads');
+    }
+  } catch (err) {
+    console.error('Failed to create stripped DB backup:', err);
+    // fallback or fail
+  } finally {
+    // Cleanup temp files
+    try { if (fs.existsSync(tempDbPath)) fs.unlinkSync(tempDbPath); } catch {}
+    try { if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir); } catch {}
   }
 
   const meta = JSON.stringify({
@@ -2828,14 +2847,28 @@ app.get('/api/backup/create', async (req, res) => {
     const { dbPath, uploadsPath } = getBackupPaths();
     const zip = new AdmZip();
 
-    // Add database file
-    if (fs.existsSync(dbPath)) {
-      zip.addLocalFile(dbPath, 'database');
-    }
+    // Create temporary directory for stripping users
+    const tempDir = path.join(process.cwd(), 'data', `temp_backup_manual_${Date.now()}`);
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    const tempDbPath = path.join(tempDir, 'pos_inventory.db');
 
-    // Add uploads folder recursively
-    if (fs.existsSync(uploadsPath)) {
-      zip.addLocalFolder(uploadsPath, 'uploads');
+    try {
+      if (fs.existsSync(dbPath)) {
+        await db.backup(tempDbPath);
+        const { default: Database } = await import('better-sqlite3');
+        const tempDb = new Database(tempDbPath);
+        tempDb.exec('DELETE FROM users');
+        tempDb.close();
+        zip.addLocalFile(tempDbPath, 'database');
+      }
+
+      if (fs.existsSync(uploadsPath)) {
+        zip.addLocalFolder(uploadsPath, 'uploads');
+      }
+    } finally {
+      // Cleanup temp files
+      try { if (fs.existsSync(tempDbPath)) fs.unlinkSync(tempDbPath); } catch {}
+      try { if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir); } catch {}
     }
 
     // Add metadata
@@ -2890,14 +2923,108 @@ app.post('/api/backup/restore', restoreUpload.single('backup'), async (req, res)
 
     const { dbPath, uploadsPath } = getBackupPaths();
 
-    // Close DB, extract, reopen
-    db.close();
+    // Create temporary restore file
+    const tempDbPath = path.join(process.cwd(), 'tmp_restore', `pos_inventory_restore_${Date.now()}.db`);
+    fs.mkdirSync(path.dirname(tempDbPath), { recursive: true });
+    if (fs.existsSync(tempDbPath)) fs.unlinkSync(tempDbPath);
 
-    // Extract DB
+    // Extract database
     const dbEntry = zip.getEntry('database/pos_inventory.db');
     if (dbEntry) {
-      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-      fs.writeFileSync(dbPath, dbEntry.getData());
+      fs.writeFileSync(tempDbPath, dbEntry.getData());
+
+      // Attach database trigger
+      db.exec(`ATTACH DATABASE '${tempDbPath.replace(/'/g, "''")}' AS backup_db`);
+      db.exec('PRAGMA foreign_keys = OFF');
+
+      try {
+        db.transaction(() => {
+          // Get all tables in backup and current database
+          const backupTablesStmt = db.prepare("SELECT name FROM backup_db.sqlite_master WHERE type='table'");
+          const mainTablesStmt = db.prepare("SELECT name FROM main.sqlite_master WHERE type='table'");
+          const backupTables = backupTablesStmt.all();
+          const mainTables = mainTablesStmt.all();
+          const tableNames = backupTables.map(t => t.name);
+          const mainTableSet = new Set(mainTables.map(t => t.name));
+
+          console.log('[Restore] Tables found in backup:', tableNames);
+
+          for (const tableName of tableNames) {
+            // Skip users, sqlite internal tables
+            if (tableName === 'users' || tableName === 'sqlite_sequence') {
+              console.log(`[Restore] Skipping table [${tableName}] for preservation.`);
+              continue;
+            }
+
+            // Prevent malformed names from being used in dynamic SQL
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(tableName)) {
+              console.log(`[Restore] Skipping table [${tableName}] due to invalid name.`);
+              continue;
+            }
+
+            // Skip tables that do not exist in current schema
+            if (!mainTableSet.has(tableName)) {
+              console.log(`[Restore] Skipping table [${tableName}] because it does not exist in current database.`);
+              continue;
+            }
+
+            console.log(`[Restore] Restoring table [${tableName}]...`);
+
+            const mainColumns = db.prepare(`PRAGMA main.table_info(${tableName})`).all().map(col => col.name);
+            const backupColumns = db.prepare(`PRAGMA backup_db.table_info(${tableName})`).all().map(col => col.name);
+            const backupColumnSet = new Set(backupColumns);
+
+            const insertColumns = [];
+            const selectExpressions = [];
+
+            for (const col of mainColumns) {
+              if (backupColumnSet.has(col)) {
+                insertColumns.push(col);
+                selectExpressions.push(col);
+                continue;
+              }
+
+              // Backward/forward compatibility for product availability naming
+              if (col === 'status' && backupColumnSet.has('availability')) {
+                insertColumns.push('status');
+                selectExpressions.push(`CASE
+                  WHEN lower(trim(availability)) IN ('unavailable', 'not available') THEN 'unavailable'
+                  ELSE 'available'
+                END AS status`);
+                continue;
+              }
+
+              if (col === 'availability' && backupColumnSet.has('status')) {
+                insertColumns.push('availability');
+                selectExpressions.push(`CASE
+                  WHEN lower(trim(status)) IN ('unavailable', 'not available') THEN 'unavailable'
+                  ELSE 'available'
+                END AS availability`);
+                continue;
+              }
+            }
+
+            if (insertColumns.length === 0) {
+              console.log(`[Restore] Skipping table [${tableName}] because no compatible columns were found.`);
+              continue;
+            }
+
+            // Clear current table
+            db.prepare(`DELETE FROM main.${tableName}`).run();
+            // Insert from backup using compatible columns only
+            const insertSql = `INSERT INTO main.${tableName} (${insertColumns.join(', ')})
+              SELECT ${selectExpressions.join(', ')}
+              FROM backup_db.${tableName}`;
+            db.prepare(insertSql).run();
+          }
+        })();
+        console.log('[Restore] ✓ Selective restore complete');
+      } finally {
+        // Detach and cleanup even on errors
+        db.exec('PRAGMA foreign_keys = ON');
+        db.exec('DETACH DATABASE backup_db');
+        try { fs.unlinkSync(tempDbPath); } catch (e) {}
+      }
     }
 
     // Extract uploads folder
@@ -2908,22 +3035,8 @@ app.post('/api/backup/restore', restoreUpload.single('backup'), async (req, res)
       fs.writeFileSync(destPath, entry.getData());
     }
 
-    // Cleanup temp file
+    // Cleanup temp uploaded zip file
     fs.unlinkSync(req.file.path);
-
-    // Reopen DB
-    const { default: Database } = await import('better-sqlite3');
-    const newDb = new Database(dbPath);
-    newDb.pragma('foreign_keys = ON');
-    newDb.pragma('journal_mode = WAL');
-    // Re-assign db methods so queries work again
-    // Re-assign db methods so queries work again without triggering getter errors
-    const dbMethods = ['prepare', 'transaction', 'exec', 'pragma', 'close', 'backup'];
-    for (const m of dbMethods) {
-      if (typeof newDb[m] === 'function') {
-        db[m] = newDb[m].bind(newDb);
-      }
-    }
 
     res.json({ success: true, message: 'Backup restored successfully' });
   } catch (err) {

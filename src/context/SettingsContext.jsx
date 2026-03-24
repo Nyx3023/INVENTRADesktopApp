@@ -15,7 +15,7 @@ export const SettingsProvider = ({ children }) => {
     language: 'en',
     receiptFooter: 'Thank you for your business!',
     theme: 'light',
-    taxRate: 12,
+    taxRate: 0,
     lowStockThreshold: 10
   });
 
