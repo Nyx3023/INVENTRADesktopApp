@@ -98,6 +98,7 @@
     "npmRebuild": true,
     "buildDependenciesFromSource": true,
     "win": {
+      "icon": "src/assets/jbologo.ico",
       "target": [
         {
           "target": "nsis",

@@ -168,6 +168,7 @@ async function createWindow() {
     minHeight: 760,
     show: false,
     autoHideMenuBar: true,
+    icon: path.join(__dirname, '..', 'src', 'assets', 'jbologo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
