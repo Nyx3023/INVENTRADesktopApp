@@ -99,7 +99,9 @@ const InventoryScreen = () => {
   const [stockMode, setStockMode] = useState(false);
   const [stockModeQty, setStockModeQty] = useState(1);
   const [stockModeBarcode, setStockModeBarcode] = useState('');
-  const [pendingStockScans, setPendingStockScans] = useState({}); // Stores staged scans { [productId]: totalQtyScanned }
+  const [pendingStockScans, setPendingStockScans] = useState({}); // { [productId]: totalQtyScanned }
+  const [isStockReviewOpen, setIsStockReviewOpen] = useState(false); // Review modal
+  const [isSavingStock, setIsSavingStock] = useState(false);
   const stockModeBarcodeRef = useRef(null);
   const stockModeLastScan = useRef(null);
 
@@ -278,15 +280,10 @@ const InventoryScreen = () => {
 
     try {
       if (quickStockType === 'in') {
-        // Add stock directly - ensure numeric addition
         const currentQty = Number(selectedProduct.quantity) || 0;
         const newQuantity = currentQty + qty;
-        await productService.update(selectedProduct.id, {
-          ...selectedProduct,
-          quantity: newQuantity,
-        });
 
-        // Log as stock in activity
+        // Let the server handle both the quantity update and adjustment log atomically
         await stockAdjustmentService.create({
           productId: selectedProduct.id,
           adjustmentType: 'correction',
@@ -299,20 +296,13 @@ const InventoryScreen = () => {
 
         toast.success(`Stock added: ${qty}`);
       } else {
-        // Remove stock directly - ensure numeric calculation
         const currentQty = Number(selectedProduct.quantity) || 0;
-        const newQuantity = Math.max(0, currentQty - qty);
         if (currentQty < qty) {
           toast.error('Insufficient stock');
           return;
         }
+        const newQuantity = Math.max(0, currentQty - qty);
 
-        await productService.update(selectedProduct.id, {
-          ...selectedProduct,
-          quantity: newQuantity,
-        });
-
-        // Log as stock out activity
         await stockAdjustmentService.create({
           productId: selectedProduct.id,
           adjustmentType: 'correction',
@@ -441,57 +431,20 @@ const InventoryScreen = () => {
     }
   };
 
-  // Toggle stock mode and save batched scans
-  const toggleStockMode = async () => {
+  // Toggle stock mode
+  const toggleStockMode = () => {
     if (stockMode) {
-      // Exiting stock mode - save pending scans if any
+      // Exiting stock mode - open review modal if there are pending scans
       const stagedIds = Object.keys(pendingStockScans);
       if (stagedIds.length > 0) {
-        setIsLoading(true);
-        try {
-          let totalAdded = 0;
-          for (const productId of stagedIds) {
-            const qty = pendingStockScans[productId];
-            const product = safeProducts.find(p => p.id === productId);
-            if (!product) continue;
-            
-            const currentQty = Number(product.quantity) || 0;
-            const newQuantity = currentQty + qty;
-
-            await productService.update(product.id, {
-              ...product,
-              quantity: newQuantity,
-            });
-
-            await stockAdjustmentService.create({
-              productId: product.id,
-              adjustmentType: 'physical_count',
-              newQuantity: newQuantity,
-              reason: 'Stock Mode entry',
-              notes: 'Added via barcode scanner in Stock Mode (Batched)',
-              // Use the active user object accurately instead of fallback to 'System'
-              adjustedBy: user?.name,
-              adjustedById: user?.id
-            });
-            totalAdded += qty;
-          }
-          toast.success(`Successfully saved ${totalAdded} items to stock!`, { duration: 3000, icon: '✅' });
-          setPendingStockScans({});
-          await loadProducts();
-        } catch (e) {
-          console.error('Error saving batched stock:', e);
-          toast.error('Failed to save some stock items: ' + e.message);
-        } finally {
-          setIsLoading(false);
-        }
+        setIsStockReviewOpen(true);
       } else {
         toast('Stock Mode disabled without changes', { duration: 2000 });
+        setStockMode(false);
       }
-      setStockMode(false);
     } else {
       // Entering stock mode
       setStockMode(true);
-      // focus the barcode input
       setTimeout(() => {
         if (stockModeBarcodeRef.current) {
           stockModeBarcodeRef.current.focus();
@@ -499,6 +452,73 @@ const InventoryScreen = () => {
       }, 100);
       toast.success('Stock Mode enabled! Scan barcodes to stage items.', { duration: 3000, icon: '📦' });
     }
+  };
+
+  // Save all staged stock scans (called from review modal)
+  const saveStockModeScans = async () => {
+    const stagedIds = Object.keys(pendingStockScans);
+    if (stagedIds.length === 0) return;
+
+    setIsSavingStock(true);
+    try {
+      let totalAdded = 0;
+      for (const productId of stagedIds) {
+        const qty = pendingStockScans[productId];
+        const product = safeProducts.find(p => p.id === productId);
+        if (!product) continue;
+
+        const currentQty = Number(product.quantity) || 0;
+        const newQuantity = currentQty + qty;
+
+        // Let the server handle both quantity update and adjustment log atomically
+        await stockAdjustmentService.create({
+          productId: product.id,
+          adjustmentType: 'physical_count',
+          newQuantity: newQuantity,
+          reason: 'Stock Mode entry',
+          notes: `Added via barcode scanner in Stock Mode (+${qty})`,
+          adjustedBy: user?.name,
+          adjustedById: user?.id
+        });
+        totalAdded += qty;
+      }
+      toast.success(`Successfully saved ${totalAdded} items across ${stagedIds.length} product(s)!`, { duration: 3000, icon: '✅' });
+      setPendingStockScans({});
+      setIsStockReviewOpen(false);
+      setStockMode(false);
+      await loadProducts();
+    } catch (e) {
+      console.error('Error saving batched stock:', e);
+      toast.error('Failed to save some stock items: ' + e.message);
+    } finally {
+      setIsSavingStock(false);
+    }
+  };
+
+  // Discard all staged scans
+  const discardStockModeScans = () => {
+    setPendingStockScans({});
+    setIsStockReviewOpen(false);
+    setStockMode(false);
+    toast('Stock Mode cancelled. All scans discarded.', { duration: 2000 });
+  };
+
+  // Remove a single product from pending scans
+  const removePendingScan = (productId) => {
+    setPendingStockScans(prev => {
+      const updated = { ...prev };
+      delete updated[productId];
+      return updated;
+    });
+  };
+
+  // Update quantity for a single pending scan
+  const updatePendingScanQty = (productId, newQty) => {
+    const qty = Math.max(1, parseInt(newQty, 10) || 1);
+    setPendingStockScans(prev => ({
+      ...prev,
+      [productId]: qty
+    }));
   };
 
   const handleExportProducts = () => {
@@ -1926,6 +1946,124 @@ const InventoryScreen = () => {
                   Delete {selectedProducts.length} Product{selectedProducts.length !== 1 ? 's' : ''}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+        </ModalPortal>
+      )}
+      {/* Stock Mode Review Modal */}
+      {isStockReviewOpen && (
+        <ModalPortal>
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+          onClick={() => {}} // Don't close on backdrop click
+        >
+          <div
+            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className={`flex items-center justify-between px-6 py-4 border-b ${colors.border.primary}`}>
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-green-100 dark:bg-green-900/20 rounded-lg">
+                  <QrCodeIcon className="h-6 w-6 text-green-600 dark:text-green-400" />
+                </div>
+                <div>
+                  <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Review Scanned Items</h3>
+                  <p className={`text-sm ${colors.text.secondary}`}>
+                    {Object.keys(pendingStockScans).length} product(s) · {Object.values(pendingStockScans).reduce((a, b) => a + b, 0)} total items
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Body - Scrollable */}
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              <div className="space-y-3">
+                {Object.entries(pendingStockScans).map(([productId, qty]) => {
+                  const product = safeProducts.find(p => p.id === productId);
+                  if (!product) return null;
+                  const currentQty = Number(product.quantity) || 0;
+                  const newQty = currentQty + qty;
+
+                  return (
+                    <div
+                      key={productId}
+                      className={`p-4 rounded-xl border ${colors.border.primary} ${colors.bg.secondary} flex items-center gap-4`}
+                    >
+                      {/* Product Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className={`font-medium ${colors.text.primary} truncate`}>{product.name}</p>
+                        <p className={`text-xs ${colors.text.secondary} mt-0.5`}>
+                          {product.barcode || 'No barcode'} · {product.category_name || 'Uncategorized'}
+                        </p>
+                      </div>
+
+                      {/* Current → New Stock */}
+                      <div className="flex items-center gap-2 text-sm flex-shrink-0">
+                        <span className={`${colors.text.secondary}`}>{currentQty}</span>
+                        <ChevronRightIcon className="h-4 w-4 text-gray-400" />
+                        <span className="font-bold text-green-600 dark:text-green-400">{newQty}</span>
+                      </div>
+
+                      {/* Editable Qty */}
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <span className={`text-xs ${colors.text.secondary}`}>+</span>
+                        <input
+                          type="number"
+                          min="1"
+                          value={qty}
+                          onChange={(e) => updatePendingScanQty(productId, e.target.value)}
+                          className={`w-16 p-1.5 text-center rounded-lg border ${colors.input.primary} text-sm font-semibold`}
+                        />
+                      </div>
+
+                      {/* Remove Button */}
+                      <button
+                        onClick={() => removePendingScan(productId)}
+                        className="p-1.5 rounded-lg text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors flex-shrink-0"
+                        title="Remove this item"
+                      >
+                        <XMarkIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  );
+                })}
+
+                {Object.keys(pendingStockScans).length === 0 && (
+                  <div className="text-center py-8">
+                    <p className={`${colors.text.secondary}`}>All items removed. Modal will close.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className={`px-6 py-4 border-t ${colors.border.primary} flex items-center justify-between gap-3`}>
+              <button
+                onClick={discardStockModeScans}
+                disabled={isSavingStock}
+                className={`px-4 py-2.5 border ${colors.border.primary} rounded-xl text-sm font-medium ${colors.text.secondary} hover:${colors.bg.secondary} transition-all duration-200 disabled:opacity-50`}
+              >
+                Discard All
+              </button>
+              <button
+                onClick={saveStockModeScans}
+                disabled={isSavingStock || Object.keys(pendingStockScans).length === 0}
+                className="px-6 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-semibold transition-all duration-200 shadow-lg shadow-green-600/20 flex items-center gap-2 disabled:opacity-50"
+              >
+                {isSavingStock ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white/30 border-t-white"></div>
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircleIcon className="h-5 w-5" />
+                    Save All ({Object.values(pendingStockScans).reduce((a, b) => a + b, 0)} items)
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
