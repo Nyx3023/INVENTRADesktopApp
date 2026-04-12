@@ -27,6 +27,7 @@ const UserManagement = () => {
     role: '',
     permissions: []
   });
+  const [userToDelete, setUserToDelete] = useState(null);
 
   const permissionCategories = [
     {
@@ -198,20 +199,22 @@ const UserManagement = () => {
     setShowModal(true);
   };
 
-  const handleDelete = async (userId) => {
+  const handleDelete = (userId) => {
     // Prevent deleting yourself
     if (currentUser && userId === currentUser.id) {
       toast.error('You cannot delete your own account');
       return;
     }
+    const targetUser = users.find(u => u.id === userId);
+    setUserToDelete(targetUser);
+  };
 
-    if (!confirm('Are you sure you want to delete this user?')) {
-      return;
-    }
-
+  const confirmDelete = async () => {
+    if (!userToDelete) return;
     try {
-      await userService.remove(userId);
+      await userService.remove(userToDelete.id);
       toast.success('User deleted successfully');
+      setUserToDelete(null);
       fetchUsers();
     } catch (error) {
       console.error('Error deleting user:', error);
@@ -474,6 +477,47 @@ const UserManagement = () => {
             </div>
           </div>
           </ModalPortal>
+        )}
+
+        {/* Delete User Confirmation Modal */}
+        {userToDelete && (
+          <div
+            className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+            onClick={() => setUserToDelete(null)}
+          >
+            <div
+              className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-sm`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
+                <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Delete User</h3>
+              </div>
+              <div className="px-6 py-4">
+                <div className={`p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 mb-4`}>
+                  <p className="text-sm text-red-800 dark:text-red-300">
+                    <strong>Warning:</strong> This action cannot be undone.
+                  </p>
+                </div>
+                <p className={`${colors.text.secondary}`}>
+                  Are you sure you want to delete <strong className={colors.text.primary}>{userToDelete.name}</strong> ({userToDelete.email})?
+                </p>
+              </div>
+              <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
+                <button
+                  onClick={() => setUserToDelete(null)}
+                  className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 transition-colors"
+                >
+                  Delete User
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </AdminOnly>

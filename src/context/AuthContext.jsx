@@ -115,7 +115,7 @@ export const AuthProvider = ({ children }) => {
     // Log logout activity
     if (user) {
       try {
-        await activityLogService.log({
+        await activityLogService.create({
           userId: user.id,
           userName: user.name,
           userEmail: user.email,

@@ -163,8 +163,8 @@ const ProductModal = ({ product, onClose, onSave, prefilledBarcode }) => {
       }
 
       const fd = new FormData();
-      fd.append('image', imageState.file);
       fd.append('productName', formData.name || 'product');
+      fd.append('image', imageState.file);
 
       const res = await fetch('/api/upload-image', { method: 'POST', body: fd });
       const data = await res.json();

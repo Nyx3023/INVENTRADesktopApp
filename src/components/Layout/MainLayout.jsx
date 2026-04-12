@@ -39,6 +39,8 @@ const MainLayout = () => {
   const { isScanning } = useGlobalBarcode();
   const { isBlocked, blockNavigation, backAttempted, resetBackAttempt } = useNavigationBlocker();
 
+  const [storeLogo, setStoreLogo] = useState(JBO_LOGO);
+
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
   const [showNavModal, setShowNavModal] = useState(false);
   const [attemptedPath, setAttemptedPath] = useState(null);
@@ -105,6 +107,35 @@ const MainLayout = () => {
       setCurrentDateTime(new Date());
     }, 1000);
     return () => clearInterval(intervalId);
+  }, []);
+
+  // Load store logo from localStorage/API
+  useEffect(() => {
+    try {
+      const savedStoreInfo = localStorage.getItem('storeInfo');
+      if (savedStoreInfo) {
+        const parsed = JSON.parse(savedStoreInfo);
+        if (parsed.logoUrl) {
+          setStoreLogo(parsed.logoUrl);
+        }
+      }
+    } catch (e) {
+      console.error('Error loading store logo:', e);
+    }
+
+    // Listen for storage changes (when settings page saves a new logo)
+    const handleStorageChange = (e) => {
+      if (e.key === 'storeInfo' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (parsed.logoUrl) {
+            setStoreLogo(parsed.logoUrl);
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
   useEffect(() => {
@@ -213,13 +244,11 @@ const MainLayout = () => {
           <div className="flex items-center space-x-4">
             {/* Logo */}
             <Link to="/" onClick={(e) => handleNavigationClick(e, '/')} className="flex items-center gap-2 flex-shrink-0">
-              <div className="w-10 h-10 rounded-lg bg-white/20 dark:bg-white/10 backdrop-blur-sm flex items-center justify-center border border-white/20 overflow-hidden">
-                <img
-                  src={JBO_LOGO}
-                  alt="JBO Arts & Crafts Logo"
-                  className="w-full h-full object-contain p-1"
-                />
-              </div>
+              <img
+                src={storeLogo}
+                alt="Store Logo"
+                className="w-10 h-10 object-contain rounded-lg"
+              />
             </Link>
             {/* Page Title */}
             <div>

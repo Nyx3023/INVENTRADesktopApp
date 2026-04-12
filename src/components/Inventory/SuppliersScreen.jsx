@@ -119,11 +119,19 @@ const SuppliersScreen = () => {
     setShowModal(true);
   };
 
-  const remove = async (id) => {
-    if (!window.confirm('Delete this supplier?')) return;
+  const [supplierToDelete, setSupplierToDelete] = useState(null);
+
+  const remove = (id) => {
+    const supplier = suppliers.find(s => s.id === id);
+    setSupplierToDelete(supplier);
+  };
+
+  const confirmRemove = async () => {
+    if (!supplierToDelete) return;
     try {
-      await supplierService.delete(id);
+      await supplierService.delete(supplierToDelete.id);
       toast.success('Supplier deleted');
+      setSupplierToDelete(null);
       await load();
     } catch {
       toast.error('Delete failed');
@@ -441,6 +449,42 @@ const SuppliersScreen = () => {
           </div>
         </div>
         </ModalPortal>
+      )}
+
+      {/* Delete Supplier Confirmation Modal */}
+      {supplierToDelete && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+          onClick={() => setSupplierToDelete(null)}
+        >
+          <div
+            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-sm`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
+              <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Delete Supplier</h3>
+            </div>
+            <div className="px-6 py-4">
+              <p className={`${colors.text.secondary}`}>
+                Are you sure you want to delete <strong className={colors.text.primary}>{supplierToDelete.name}</strong>?
+              </p>
+            </div>
+            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
+              <button
+                onClick={() => setSupplierToDelete(null)}
+                className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRemove}
+                className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

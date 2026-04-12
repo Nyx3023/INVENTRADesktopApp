@@ -249,13 +249,14 @@ export const transactionService = {
   },
 
   delete: async (id, userRole) => {
+    const user = getCurrentUser();
     if (hasNativeBridge) {
-      return nativeCall('transactions', 'archive', { id, userRole });
+      return nativeCall('transactions', 'archive', { id, userRole, userId: user?.id, userName: user?.name, userEmail: user?.email });
     }
     return fetchJson(`${API_URL}/transactions/${id}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userRole }),
+      body: JSON.stringify({ userRole, userId: user?.id, userName: user?.name, userEmail: user?.email }),
     });
   },
 
@@ -267,24 +268,26 @@ export const transactionService = {
   },
 
   restore: async (id, userRole) => {
+    const user = getCurrentUser();
     if (hasNativeBridge) {
-      return nativeCall('transactions', 'restore', { id, userRole });
+      return nativeCall('transactions', 'restore', { id, userRole, userId: user?.id, userName: user?.name, userEmail: user?.email });
     }
     return fetchJson(`${API_URL}/transactions/${id}/restore`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userRole }),
+      body: JSON.stringify({ userRole, userId: user?.id, userName: user?.name, userEmail: user?.email }),
     });
   },
 
   permanentDelete: async (id, userRole) => {
+    const user = getCurrentUser();
     if (hasNativeBridge) {
-      return nativeCall('transactions', 'delete', { id, userRole });
+      return nativeCall('transactions', 'delete', { id, userRole, userId: user?.id, userName: user?.name, userEmail: user?.email });
     }
     return fetchJson(`${API_URL}/transactions/${id}/permanent`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userRole }),
+      body: JSON.stringify({ userRole, userId: user?.id, userName: user?.name, userEmail: user?.email }),
     });
   },
 };
@@ -334,21 +337,25 @@ export const categoryService = {
     return fetchJson(`${API_URL}/categories`);
   },
   create: async (name, description) => {
+    const user = getCurrentUser();
     if (hasNativeBridge) {
-      return nativeCall('categories', 'create', { name, description });
+      return nativeCall('categories', 'create', { name, description, userId: user?.id, userName: user?.name, userEmail: user?.email });
     }
     return fetchJson(`${API_URL}/categories`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, description }),
+      body: JSON.stringify({ name, description, userId: user?.id, userName: user?.name, userEmail: user?.email }),
     });
   },
   delete: async (name) => {
+    const user = getCurrentUser();
     if (hasNativeBridge) {
-      return nativeCall('categories', 'delete', { name });
+      return nativeCall('categories', 'delete', { name, userId: user?.id, userName: user?.name, userEmail: user?.email });
     }
     return fetchJson(`${API_URL}/categories/${encodeURIComponent(name)}`, {
       method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user?.id, userName: user?.name, userEmail: user?.email }),
     });
   },
 };
@@ -402,30 +409,39 @@ export const userService = {
     return fetchJson(`${API_URL}/users/${id}`);
   },
   create: async (user) => {
+    const currentUser = getCurrentUser();
+    const payload = { ...user, actingUserId: currentUser?.id, actingUserName: currentUser?.name, actingUserEmail: currentUser?.email };
     if (hasNativeBridge) {
-      return nativeCall('users', 'create', user);
+      return nativeCall('users', 'create', payload);
     }
     return fetchJson(`${API_URL}/users`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(user),
+      body: JSON.stringify(payload),
     });
   },
   update: async (id, user) => {
+    const currentUser = getCurrentUser();
+    const payload = { ...user, actingUserId: currentUser?.id, actingUserName: currentUser?.name, actingUserEmail: currentUser?.email };
     if (hasNativeBridge) {
-      return nativeCall('users', 'update', { id, user });
+      return nativeCall('users', 'update', { id, user: payload });
     }
     return fetchJson(`${API_URL}/users/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(user),
+      body: JSON.stringify(payload),
     });
   },
   remove: async (id) => {
+    const currentUser = getCurrentUser();
     if (hasNativeBridge) {
-      return nativeCall('users', 'delete', { id });
+      return nativeCall('users', 'delete', { id, actingUserId: currentUser?.id, actingUserName: currentUser?.name, actingUserEmail: currentUser?.email });
     }
-    return fetchJson(`${API_URL}/users/${id}`, { method: 'DELETE' });
+    return fetchJson(`${API_URL}/users/${id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actingUserId: currentUser?.id, actingUserName: currentUser?.name, actingUserEmail: currentUser?.email }),
+    });
   },
 };
 

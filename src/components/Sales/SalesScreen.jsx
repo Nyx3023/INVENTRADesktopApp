@@ -269,28 +269,6 @@ const SalesScreen = () => {
       const updatedTransactions = transactions.filter(t => t.id !== transactionToDelete.id);
       setTransactions(updatedTransactions);
 
-      // Log archive activity (this is already logged on the server, but we log it here too for consistency)
-      try {
-        await fetch('/api/activity-logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: user?.id,
-            userName: user?.name,
-            userEmail: user?.email,
-            action: 'ARCHIVE_TRANSACTION',
-            entityType: 'transaction',
-            entityId: transactionToDelete.id,
-            details: {
-              transactionId: transactionToDelete.id,
-              total: transactionToDelete.total,
-              archivedBy: user?.name
-            }
-          })
-        });
-      } catch (logError) {
-        console.error('Failed to log archive activity:', logError);
-      }
 
       toast.success('Transaction archived successfully. It will be permanently deleted after 60 days.');
       setShowDeleteModal(false);

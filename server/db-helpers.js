@@ -15,7 +15,8 @@ export function execute(query, params = []) {
       .replace(/IF NOT EXISTS/gi, '')
       .replace(/ENGINE=InnoDB/gi, '')
       .replace(/DEFAULT CHARSET=utf8mb4/gi, '')
-      .replace(/COLLATE=utf8mb4_general_ci/gi, '');
+      .replace(/COLLATE=utf8mb4_general_ci/gi, '')
+      .replace(/\s+FOR\s+UPDATE/gi, '');
 
     // Handle SHOW COLUMNS queries
     if (normalizedQuery.trim().toUpperCase().startsWith('SHOW COLUMNS')) {

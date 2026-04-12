@@ -360,16 +360,9 @@ const LogsScreen = () => {
                         </div>
                       </td>
                       <td className={`px-6 py-4 text-sm ${colors.text.secondary}`}>
-                        <div className="max-w-md truncate">
-                          {log.entity_type && (
-                            <span className={`inline-block px-2 py-0.5 rounded text-xs ${colors.bg.tertiary} ${colors.text.secondary} mr-2`}>
-                              {log.entity_type}
-                            </span>
-                          )}
-                          <span className="truncate font-medium block">
-                            {formatDetailsForTable(log)}
-                          </span>
-                        </div>
+                        <span className="max-w-md block truncate">
+                          {formatDetailsForTable(log)}
+                        </span>
                       </td>
                     </tr>
                   );

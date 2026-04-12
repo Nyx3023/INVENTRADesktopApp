@@ -2,6 +2,14 @@ import React from 'react';
 
 const formatCurrency = (amt) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(amt || 0));
 
+/** Convert snake_case / camelCase keys into readable labels */
+const humanizeKey = (key) => {
+  return key
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
 /**
  * Transforms an activity log into a brief singular string for the Logs table row.
  * @param {Object} log - The activity log object
@@ -16,57 +24,120 @@ export const formatDetailsForTable = (log) => {
 
   try {
     switch (action) {
+      case 'LOGIN':
+        return `Logged in${details.via ? ` via ${details.via}` : ''}${details.method ? ` (${details.method})` : ''}`;
+
+      case 'LOGOUT':
+        return 'Logged out of the system';
+
+      case 'LOGIN_FAILED':
+        return `Login failed${details.reason ? `: ${details.reason}` : ''}`;
+
+      case 'ADMIN_OVERRIDE_VERIFIED':
+        return `Admin override verified${details.via ? ` via ${details.via}` : ''}`;
+
       case 'CREATE_PRODUCT':
-        return `Created product ${details.name || details.productName || details.product_name || ''} at ${formatCurrency(details.price)} with ${details.quantity || 0} stock.`;
-      
-      case 'UPDATE_PRODUCT':
+        return `Created "${details.name || details.productName || details.product_name || 'product'}" — ${formatCurrency(details.price)}, ${details.quantity || 0} in stock`;
+
+      case 'UPDATE_PRODUCT': {
+        const name = details.name || details.productName || '';
         if (details.changes) {
           const keys = Object.keys(details.changes);
-          return `Updated ${keys.length} fields: ${keys.join(', ')}`;
+          return `Updated ${name ? `"${name}" — ` : ''}${keys.map(humanizeKey).join(', ')}`;
         }
-        return `Updated product ${details.name || ''}`;
-      
+        return `Updated product${name ? ` "${name}"` : ''}`;
+      }
+
       case 'DELETE_PRODUCT':
-        return `Deleted product ${details.name || details.productName || details.product_name || details.productId || ''}`;
-      
+        return `Deleted "${details.name || details.productName || details.product_name || 'product'}"`;
+
       case 'STOCK_IN':
+        return `Added ${details.quantityChange || details.quantity || details.quantity_changed || details.difference || 0} units to "${details.productName || details.product_name || details.name || 'product'}"${details.reason ? ` — ${details.reason}` : ''}`;
+
       case 'STOCK_OUT':
+        return `Removed ${Math.abs(details.quantityChange || details.quantity || details.quantity_changed || details.difference || 0)} units from "${details.productName || details.product_name || details.name || 'product'}"${details.reason ? ` — ${details.reason}` : ''}`;
+
       case 'STOCK_ADJUSTMENT':
-        return `${action === 'STOCK_IN' ? 'Added' : action === 'STOCK_OUT' ? 'Removed' : 'Adjusted'} ${details.quantityChange || details.quantity || details.quantity_changed || details.difference || 0} units for ${details.productName || details.product_name || details.name || 'product'}${details.reason ? ` (${details.reason})` : ''}`;
-      
+        return `Adjusted stock for "${details.productName || details.product_name || details.name || 'product'}" by ${details.quantityChange || details.quantity || details.quantity_changed || details.difference || 0} units${details.reason ? ` — ${details.reason}` : ''}`;
+
       case 'CREATE_SALE':
-        return `Processed sale for ${formatCurrency(details.total_amount || details.total || 0)}`;
+        return `Processed sale for ${formatCurrency(details.total_amount || details.total || 0)}${details.receipt_number ? ` (Receipt #${details.receipt_number})` : ''}`;
 
       case 'VOID_SALE':
-        return `Voided sale ${details.transaction_id || details.receipt_number || ''}${details.reason ? ` - ${details.reason}` : ''}`;
+        return `Voided sale${details.receipt_number ? ` #${details.receipt_number}` : ''}${details.reason ? ` — ${details.reason}` : ''}`;
+
+      case 'ARCHIVE_TRANSACTION':
+        return `Archived transaction${details.receipt_number ? ` #${details.receipt_number}` : ''}`;
+
+      case 'RESTORE_TRANSACTION':
+        return `Restored transaction${details.receipt_number ? ` #${details.receipt_number}` : ''}`;
+
+      case 'DELETE_TRANSACTION':
+        return `Permanently deleted transaction${details.receipt_number ? ` #${details.receipt_number}` : ''}`;
 
       case 'CREATE_CATEGORY':
+        return `Created category "${details.name || details.category_name || ''}"`;
+
       case 'DELETE_CATEGORY':
-        return `${action.split('_')[0]} category: ${details.name || details.category_name || ''}`;
-        
+        return `Deleted category "${details.name || details.category_name || ''}"`;
+
+      case 'CREATE_SUPPLIER':
+        return `Added supplier "${details.name || details.supplier_name || ''}"`;
+
+      case 'UPDATE_SUPPLIER':
+        return `Updated supplier "${details.name || details.supplier_name || ''}"`;
+
+      case 'DELETE_SUPPLIER':
+        return `Deleted supplier "${details.name || details.supplier_name || ''}"`;
+
+      case 'CREATE_PURCHASE_ORDER':
+        return `Created purchase order${details.po_number ? ` #${details.po_number}` : ''}${details.supplier_name ? ` from ${details.supplier_name}` : ''}`;
+
+      case 'RECEIVE_PURCHASE_ORDER':
+        return `Received purchase order${details.po_number ? ` #${details.po_number}` : ''}`;
+
+      case 'CANCEL_PURCHASE_ORDER':
+        return `Cancelled purchase order${details.po_number ? ` #${details.po_number}` : ''}`;
+
       case 'CREATE_USER':
+        return `Created user "${details.username || details.name || details.email || ''}"${details.role ? ` as ${details.role}` : ''}`;
+
       case 'UPDATE_USER':
+        return `Updated user "${details.username || details.name || details.email || ''}"`;
+
       case 'DELETE_USER':
-        return `${action.split('_')[0].charAt(0) + action.split('_')[0].slice(1).toLowerCase()} user ${details.username || details.name || details.email || ''}`;
+        return `Deleted user "${details.username || details.name || details.email || ''}"`;
+
+      case 'CREATE_AUDIT':
+        return `Started inventory audit${details.audit_name ? `: ${details.audit_name}` : ''}`;
 
       case 'UPDATE_SETTINGS':
-        return `Updated system settings`;
+        if (details.setupCompleted) return 'Completed initial system setup';
+        if (details.changes) {
+          const keys = Object.keys(details.changes);
+          return `Updated ${keys.map(humanizeKey).join(', ')}`;
+        }
+        return 'Updated system settings';
 
-      case 'LOGIN':
-      case 'LOGOUT':
-      case 'LOGIN_FAILED':
-        return details.message || 'Authentication activity';
+      case 'PRINT_RECEIPT':
+        return `Printed receipt${details.receipt_number ? ` #${details.receipt_number}` : ''}`;
 
-      default:
-        // Generic fallback for objects
-        if (details.name) return details.name;
+      default: {
+        // Generic human-readable fallback
         if (details.message) return details.message;
-        const stringified = JSON.stringify(details);
-        if (stringified.length > 50) return stringified.slice(0, 50) + '...';
-        return stringified;
+        if (details.name) return details.name;
+        if (details.reason) return details.reason;
+        // Build a short readable summary from top-level string values
+        const readable = Object.entries(details)
+          .filter(([, v]) => typeof v === 'string' || typeof v === 'number')
+          .slice(0, 3)
+          .map(([k, v]) => `${humanizeKey(k)}: ${v}`)
+          .join(' · ');
+        return readable || '-';
+      }
     }
   } catch (err) {
-    return JSON.stringify(details).slice(0, 50) + '...';
+    return details.message || details.name || '-';
   }
 };
 
@@ -76,7 +147,7 @@ export const formatDetailsForTable = (log) => {
  * @returns {React.ReactNode} - Formatted bullet points or readable text highlighting all changes
  */
 export const formatDetailsForModal = (log) => {
-  if (!log || !log.details) return <span>No details provided.</span>;
+  if (!log || !log.details) return <span>No additional details.</span>;
   const { action, details } = log;
 
   if (typeof details === 'string') {
@@ -85,20 +156,45 @@ export const formatDetailsForModal = (log) => {
 
   try {
     const renderList = (items) => (
-      <ul className="list-disc list-inside space-y-1 mt-2">
-        {items.map((item, idx) => <li key={idx} className="text-sm">{item}</li>)}
+      <ul className="space-y-2 mt-2">
+        {items.map((item, idx) => (
+          <li key={idx} className="flex items-start gap-2 text-sm">
+            <span className="text-blue-500 mt-0.5">•</span>
+            <span>{item}</span>
+          </li>
+        ))}
       </ul>
     );
 
     switch (action) {
+      case 'LOGIN':
+        return renderList([
+          details.via ? `Login method: ${details.via}` : null,
+          details.method ? `Authentication: ${details.method}` : null,
+          details.rememberMe !== undefined ? `Remember me: ${details.rememberMe ? 'Yes' : 'No'}` : null,
+        ].filter(Boolean));
+
+      case 'LOGOUT':
+        return renderList(['User signed out of the system']);
+
+      case 'LOGIN_FAILED':
+        return renderList([
+          details.reason ? `Reason: ${details.reason}` : 'Authentication failed',
+        ]);
+
+      case 'ADMIN_OVERRIDE_VERIFIED':
+        return renderList([
+          details.via ? `Verified via: ${details.via}` : 'Admin identity confirmed',
+        ]);
+
       case 'CREATE_PRODUCT':
         return renderList([
-          `Name: ${details.name || details.productName || details.product_name || 'N/A'}`,
-          `Price: ${formatCurrency(details.price)}`,
-          `Cost: ${formatCurrency(details.cost)}`,
-          `Initial Stock: ${details.quantity || 0}`,
+          `Product name: ${details.name || details.productName || details.product_name || 'N/A'}`,
+          `Selling price: ${formatCurrency(details.price)}`,
+          `Unit cost: ${formatCurrency(details.cost)}`,
+          `Initial stock: ${details.quantity || 0} units`,
           details.category_name ? `Category: ${details.category_name}` : null,
-          details.barcode ? `Barcode: ${details.barcode}` : null
+          details.barcode ? `Barcode: ${details.barcode}` : null,
         ].filter(Boolean));
 
       case 'UPDATE_PRODUCT':
@@ -106,65 +202,137 @@ export const formatDetailsForModal = (log) => {
           const changeList = Object.entries(details.changes).map(([k, v]) => {
             const oldVal = v.old !== undefined ? v.old : 'None';
             const newVal = v.new !== undefined ? v.new : 'None';
-            // Simple formatting for known money fields
+            const label = humanizeKey(k);
             if (['price', 'cost'].includes(k)) {
-               return `Changed ${k} from ${formatCurrency(oldVal)} to ${formatCurrency(newVal)}`;
+              return `${label}: ${formatCurrency(oldVal)} → ${formatCurrency(newVal)}`;
             }
-            return `Changed ${k} from "${oldVal}" to "${newVal}"`;
+            return `${label}: "${oldVal}" → "${newVal}"`;
           });
           return (
             <div>
-              <p className="text-sm font-medium">Modified Fields:</p>
+              <p className="text-sm font-medium mb-1">Changes made:</p>
               {renderList(changeList)}
             </div>
           );
         }
-        return renderList(Object.entries(details).map(([k,v]) => `${k}: ${v}`));
+        return renderList(
+          Object.entries(details)
+            .filter(([, v]) => v !== null && v !== undefined)
+            .map(([k, v]) => `${humanizeKey(k)}: ${v}`)
+        );
 
       case 'DELETE_PRODUCT':
         return renderList([
-          `Name: ${details.name || details.productName || details.product_name || 'Unknown'}`,
-          `Product ID: ${details.productId || 'N/A'}`
-        ].filter(Boolean));
+          `Product: ${details.name || details.productName || details.product_name || 'Unknown'}`,
+        ]);
 
       case 'STOCK_IN':
       case 'STOCK_OUT':
-      case 'STOCK_ADJUSTMENT':
+      case 'STOCK_ADJUSTMENT': {
+        const verb = action === 'STOCK_IN' ? 'Added' : action === 'STOCK_OUT' ? 'Removed' : 'Adjusted by';
         return renderList([
           `Product: ${details.productName || details.product_name || details.name || 'Unknown'}`,
-          `Adjustment: ${details.quantityChange || details.quantity || details.quantity_changed || details.difference || 0} units`,
+          `${verb}: ${Math.abs(details.quantityChange || details.quantity || details.quantity_changed || details.difference || 0)} units`,
+          details.previousQuantity !== undefined ? `Previous stock: ${details.previousQuantity}` : null,
+          details.newQuantity !== undefined ? `New stock: ${details.newQuantity}` : null,
           details.reason ? `Reason: ${details.reason}` : null,
-          details.reference_number ? `Ref #: ${details.reference_number}` : null
+          details.reference_number ? `Reference: ${details.reference_number}` : null,
         ].filter(Boolean));
+      }
 
       case 'CREATE_SALE':
         return renderList([
-          `Receipt Number: ${details.receipt_number || 'N/A'}`,
-          `Total Amount: ${formatCurrency(details.total_amount || details.total || 0)}`,
-          details.payment_method ? `Payment Method: ${details.payment_method}` : null,
-          details.items ? `Items Purchased: ${Array.isArray(details.items) ? details.items.length : details.items}` : null
+          details.receipt_number ? `Receipt number: ${details.receipt_number}` : null,
+          `Total amount: ${formatCurrency(details.total_amount || details.total || 0)}`,
+          details.payment_method ? `Payment method: ${details.payment_method}` : null,
+          details.items ? `Items purchased: ${Array.isArray(details.items) ? details.items.length : details.items}` : null,
+          details.received_amount ? `Amount received: ${formatCurrency(details.received_amount)}` : null,
+          details.change ? `Change given: ${formatCurrency(details.change)}` : null,
+        ].filter(Boolean));
+
+      case 'VOID_SALE':
+        return renderList([
+          details.receipt_number ? `Receipt number: ${details.receipt_number}` : null,
+          details.reason ? `Reason: ${details.reason}` : null,
+          details.total_amount ? `Amount voided: ${formatCurrency(details.total_amount)}` : null,
+        ].filter(Boolean));
+
+      case 'CREATE_CATEGORY':
+      case 'DELETE_CATEGORY':
+        return renderList([
+          `Category: ${details.name || details.category_name || 'Unknown'}`,
+          details.description ? `Description: ${details.description}` : null,
+        ].filter(Boolean));
+
+      case 'CREATE_SUPPLIER':
+      case 'UPDATE_SUPPLIER':
+      case 'DELETE_SUPPLIER':
+        return renderList([
+          `Supplier: ${details.name || details.supplier_name || 'Unknown'}`,
+          details.contact ? `Contact: ${details.contact}` : null,
+          details.email ? `Email: ${details.email}` : null,
+          details.phone ? `Phone: ${details.phone}` : null,
+        ].filter(Boolean));
+
+      case 'CREATE_USER':
+      case 'UPDATE_USER':
+      case 'DELETE_USER':
+        return renderList([
+          `User: ${details.username || details.name || 'Unknown'}`,
+          details.email ? `Email: ${details.email}` : null,
+          details.role ? `Role: ${details.role}` : null,
         ].filter(Boolean));
 
       case 'UPDATE_SETTINGS':
+        if (details.setupCompleted) {
+          return renderList([
+            'Initial system setup completed',
+            details.printerConfigured !== undefined ? `Printer configured: ${details.printerConfigured ? 'Yes' : 'No'}` : null,
+          ].filter(Boolean));
+        }
         if (details.changes) {
           const settingChanges = Object.entries(details.changes).map(([k, v]) => {
-            return `Changed setting "${k.replace(/_/g, ' ')}" to "${v.new !== undefined ? v.new : v}"`;
+            const newVal = v.new !== undefined ? v.new : v;
+            return `${humanizeKey(k)}: ${newVal}`;
           });
-          return renderList(settingChanges);
+          return (
+            <div>
+              <p className="text-sm font-medium mb-1">Settings changed:</p>
+              {renderList(settingChanges)}
+            </div>
+          );
         }
-        return renderList(Object.entries(details).map(([k,v]) => `${k}: ${v}`));
+        return renderList(
+          Object.entries(details)
+            .filter(([, v]) => v !== null && v !== undefined && typeof v !== 'object')
+            .map(([k, v]) => `${humanizeKey(k)}: ${typeof v === 'boolean' ? (v ? 'Yes' : 'No') : v}`)
+        );
 
-      default:
-        // Generic fallback to nice key-value listing
-        const pairs = Object.entries(details).map(([k, v]) => {
-          if (typeof v === 'object' && v !== null) {
-            return `${k}: ${JSON.stringify(v)}`;
-          }
-          return `${k}: ${v}`;
-        });
-        return renderList(pairs);
+      case 'PRINT_RECEIPT':
+        return renderList([
+          details.receipt_number ? `Receipt: ${details.receipt_number}` : null,
+          details.printer ? `Printer: ${details.printer}` : null,
+        ].filter(Boolean));
+
+      default: {
+        // Generic human-readable fallback — never show raw JSON
+        const pairs = Object.entries(details)
+          .filter(([, v]) => v !== null && v !== undefined)
+          .map(([k, v]) => {
+            if (typeof v === 'boolean') return `${humanizeKey(k)}: ${v ? 'Yes' : 'No'}`;
+            if (typeof v === 'object') return `${humanizeKey(k)}: ${Array.isArray(v) ? `${v.length} item(s)` : 'See details'}`;
+            return `${humanizeKey(k)}: ${v}`;
+          });
+        return pairs.length > 0 ? renderList(pairs) : <span>No additional details.</span>;
+      }
     }
   } catch (err) {
-    return <pre className="text-sm whitespace-pre-wrap">{JSON.stringify(details, null, 2)}</pre>;
+    // Absolute last resort — still no raw JSON
+    const fallbackPairs = Object.entries(details)
+      .filter(([, v]) => typeof v === 'string' || typeof v === 'number')
+      .map(([k, v]) => `${humanizeKey(k)}: ${v}`);
+    return fallbackPairs.length > 0
+      ? <ul className="space-y-1 mt-2">{fallbackPairs.map((p, i) => <li key={i} className="text-sm">• {p}</li>)}</ul>
+      : <span>No additional details.</span>;
   }
 };

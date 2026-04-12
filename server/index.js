@@ -102,9 +102,9 @@ const ACTIVITY_ACTIONS = {
 function getUserFromRequest(req) {
   const user = req.user || req.session?.user || null;
   return {
-    id: user?.id || req.body?.userId || req.query?.userId || null,
-    name: user?.name || req.body?.userName || req.query?.userName || 'System',
-    email: user?.email || req.body?.userEmail || req.query?.userEmail || null,
+    id: user?.id || req.body?.actingUserId || req.body?.userId || req.query?.userId || null,
+    name: user?.name || req.body?.actingUserName || req.body?.userName || req.query?.userName || 'System',
+    email: user?.email || req.body?.actingUserEmail || req.body?.userEmail || req.query?.userEmail || null,
   };
 }
 
@@ -242,7 +242,7 @@ const storage = multer.diskStorage({
     }
   },
   filename: (req, file, cb) => {
-    // Use product name if provided, otherwise use timestamp
+    // Use product name if provided, otherwise use a generic name
     let baseFilename = 'product';
 
     if (req.body && req.body.productName) {
@@ -254,9 +254,9 @@ const storage = multer.diskStorage({
         .substring(0, 50);              // Limit length
     }
 
-    // Add timestamp to ensure uniqueness
-    const timestamp = Date.now();
-    const filename = `${baseFilename}-${timestamp}${path.extname(file.originalname)}`;
+    // Add short random hex suffix for uniqueness (matches existing naming convention)
+    const suffix = Math.random().toString(16).substring(2, 6);
+    const filename = `${baseFilename}-${suffix}${path.extname(file.originalname)}`;
     console.log('Generated filename:', filename, 'from product:', req.body?.productName);
     cb(null, filename);
   }
@@ -1169,6 +1169,17 @@ app.post('/api/categories', async (req, res) => {
       [name.trim(), description || null]
     );
     console.log('Category created:', name);
+    const user = getUserFromRequest(req);
+    logActivity({
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      action: ACTIVITY_ACTIONS.CREATE_CATEGORY,
+      entityType: 'category',
+      entityId: name.trim(),
+      details: { name: name.trim(), description: description || null },
+      ipAddress: req.ip,
+    });
     res.status(201).json({ name: name.trim(), description: description || null });
   } catch (error) {
     console.error('Error creating category:', error);
@@ -1186,6 +1197,17 @@ app.delete('/api/categories/:name', async (req, res) => {
       return res.status(404).json({ error: 'Category not found' });
     }
     console.log('Category deleted:', name);
+    const user = getUserFromRequest(req);
+    logActivity({
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      action: ACTIVITY_ACTIONS.DELETE_CATEGORY,
+      entityType: 'category',
+      entityId: name,
+      details: { name },
+      ipAddress: req.ip,
+    });
     res.json({ success: true });
   } catch (error) {
     console.error('Error deleting category:', error);
@@ -1420,7 +1442,7 @@ app.post('/api/purchase-orders/:id/receive', async (req, res) => {
 
       for (const it of items) {
         // Update product quantity (exclude deleted products)
-        const [[product]] = connection.execute(`SELECT quantity FROM products WHERE id = ? AND deleted_at IS NULL FOR UPDATE`, [it.product_id]);
+        const [[product]] = connection.execute(`SELECT quantity FROM products WHERE id = ? AND deleted_at IS NULL`, [it.product_id]);
         if (!product) {
           throw new Error(`Product ${it.product_id} not found or deleted`);
         }
@@ -1485,7 +1507,7 @@ app.post('/api/purchase-orders/:id/cancel', async (req, res) => {
 
     // Log activity - non-blocking
     try {
-      const [[poInfo]] = await pool.execute(
+      const [[poInfo]] = execute(
         'SELECT po.*, s.name AS supplier_name FROM purchase_orders po LEFT JOIN suppliers s ON s.id = po.supplier_id WHERE po.id = ?',
         [id]
       );
@@ -1591,6 +1613,19 @@ app.post('/api/users', async (req, res) => {
 
     console.log('User created with ID:', userId);
 
+    // Log activity
+    const actingUser = getUserFromRequest(req);
+    logActivity({
+      userId: actingUser.id,
+      userName: actingUser.name,
+      userEmail: actingUser.email,
+      action: ACTIVITY_ACTIONS.CREATE_USER,
+      entityType: 'user',
+      entityId: userId,
+      details: { username: name, email, role },
+      ipAddress: req.ip,
+    });
+
     // Return user without password
     res.status(201).json({
       id: userId,
@@ -1651,6 +1686,18 @@ app.put('/api/users/:id', async (req, res) => {
       res.status(404).json({ error: 'User not found' });
     } else {
       console.log('User updated:', id);
+      // Log activity
+      const actingUser = getUserFromRequest(req);
+      logActivity({
+        userId: actingUser.id,
+        userName: actingUser.name,
+        userEmail: actingUser.email,
+        action: ACTIVITY_ACTIONS.UPDATE_USER,
+        entityType: 'user',
+        entityId: id,
+        details: { username: name, email, role },
+        ipAddress: req.ip,
+      });
       // Emit websocket event to notify this specific user to refresh their permissions
       io.to(`user_${id}`).emit('permissions_updated');
       res.json({
@@ -1708,6 +1755,18 @@ app.delete('/api/users/:id', async (req, res) => {
       res.status(404).json({ error: 'User not found' });
     } else {
       console.log('User deleted:', id);
+      // Log activity
+      const actingUser = getUserFromRequest(req);
+      logActivity({
+        userId: actingUser.id,
+        userName: actingUser.name,
+        userEmail: actingUser.email,
+        action: ACTIVITY_ACTIONS.DELETE_USER,
+        entityType: 'user',
+        entityId: id,
+        details: { username: existingUsers[0].name, email: existingUsers[0].email },
+        ipAddress: req.ip,
+      });
       res.json({ success: true });
     }
   } catch (error) {
@@ -1728,7 +1787,7 @@ app.post('/api/stock-movements', async (req, res) => {
     }
 
     // Get product name (exclude deleted products)
-    const [[product]] = await pool.execute('SELECT name FROM products WHERE id = ? AND deleted_at IS NULL', [productId]);
+    const [[product]] = execute('SELECT name FROM products WHERE id = ? AND deleted_at IS NULL', [productId]);
     if (!product) {
       return res.status(404).json({ error: 'Product not found or deleted' });
     }
@@ -1755,11 +1814,12 @@ app.post('/api/stock-movements', async (req, res) => {
       ]
     );
 
-    // Log activity
+    // Log activity - determine action based on movement type
+    const stockAction = (movementType === 'in' || movementType === 'stock_in') ? 'STOCK_IN' : 'STOCK_OUT';
     logActivity({
       userId: performedById,
       userName: performedBy,
-      action: 'STOCK_OUT',
+      action: stockAction,
       entityType: 'product',
       entityId: productId,
       details: {
@@ -1944,11 +2004,14 @@ app.post('/api/stock-adjustments', async (req, res) => {
         [quantityAfter, productId]
       );
 
-      // Log activity
+      // Log activity - use STOCK_IN/STOCK_OUT based on direction, or STOCK_ADJUSTMENT for corrections
+      let stockAction = 'STOCK_ADJUSTMENT';
+      if (quantityChange > 0) stockAction = 'STOCK_IN';
+      else if (quantityChange < 0) stockAction = 'STOCK_OUT';
       logActivity({
         userId: adjustedById,
         userName: adjustedBy,
-        action: 'STOCK_ADJUSTMENT',
+        action: stockAction,
         entityType: 'product',
         entityId: productId,
         details: {
@@ -2267,6 +2330,7 @@ app.delete('/api/transactions/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { userRole } = req.body; // We'll send user role from frontend
+    const user = getUserFromRequest(req);
 
     console.log('Archive transaction request:', id, 'by role:', userRole);
 
@@ -2309,10 +2373,14 @@ app.delete('/api/transactions/:id', async (req, res) => {
       enqueueOutbox('transaction', id, 'archive', { id });
       console.log('Transaction archived successfully:', id);
       logActivity({
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
         action: ACTIVITY_ACTIONS.ARCHIVE_TRANSACTION,
         entityType: 'transaction',
         entityId: id,
         details: { message: 'Transaction archived' },
+        ipAddress: req.ip,
       });
       res.json({
         success: true,
@@ -2331,6 +2399,7 @@ app.post('/api/transactions/:id/restore', async (req, res) => {
   try {
     const { id } = req.params;
     const { userRole } = req.body;
+    const user = getUserFromRequest(req);
 
     console.log('Restore transaction request:', id, 'by role:', userRole);
 
@@ -2373,10 +2442,14 @@ app.post('/api/transactions/:id/restore', async (req, res) => {
       enqueueOutbox('transaction', id, 'restore', { id });
       console.log('Transaction restored successfully:', id);
       logActivity({
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
         action: ACTIVITY_ACTIONS.RESTORE_TRANSACTION,
         entityType: 'transaction',
         entityId: id,
         details: { message: 'Transaction restored' },
+        ipAddress: req.ip,
       });
       res.json({
         success: true,
@@ -2395,6 +2468,7 @@ app.delete('/api/transactions/:id/permanent', async (req, res) => {
   try {
     const { id } = req.params;
     const { userRole } = req.body;
+    const user = getUserFromRequest(req);
 
     console.log('Permanent delete transaction request:', id, 'by role:', userRole);
 
@@ -2434,10 +2508,14 @@ app.delete('/api/transactions/:id/permanent', async (req, res) => {
       enqueueOutbox('transaction', id, 'delete', { id });
       console.log('Transaction permanently deleted:', id);
       logActivity({
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
         action: ACTIVITY_ACTIONS.DELETE_TRANSACTION,
         entityType: 'transaction',
         entityId: id,
         details: { message: 'Transaction permanently deleted' },
+        ipAddress: req.ip,
       });
       res.json({
         success: true,
@@ -2684,7 +2762,7 @@ app.get('/api/analytics/sales', async (req, res) => {
         startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     }
 
-    const [transactions] = await pool.execute(
+    const [transactions] = execute(
       'SELECT * FROM transactions WHERE timestamp >= ? ORDER BY timestamp DESC',
       [startDate.toISOString()]
     );
@@ -2810,8 +2888,8 @@ const createAutoBackup = async () => {
     // fallback or fail
   } finally {
     // Cleanup temp files
-    try { if (fs.existsSync(tempDbPath)) fs.unlinkSync(tempDbPath); } catch {}
-    try { if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir); } catch {}
+    try { if (fs.existsSync(tempDbPath)) fs.unlinkSync(tempDbPath); } catch { }
+    try { if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir); } catch { }
   }
 
   const meta = JSON.stringify({
@@ -2829,7 +2907,7 @@ const createAutoBackup = async () => {
 
   const date = new Date().toISOString().replace(/:/g, '-');
   const backupPath = path.join(backupsDir, `INVENTRA-auto-backup-${date}.zip`);
-  
+
   // writeZip is synchronous
   zip.writeZip(backupPath);
   return backupPath;
@@ -2867,8 +2945,8 @@ app.get('/api/backup/create', async (req, res) => {
       }
     } finally {
       // Cleanup temp files
-      try { if (fs.existsSync(tempDbPath)) fs.unlinkSync(tempDbPath); } catch {}
-      try { if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir); } catch {}
+      try { if (fs.existsSync(tempDbPath)) fs.unlinkSync(tempDbPath); } catch { }
+      try { if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir); } catch { }
     }
 
     // Add metadata
@@ -3023,7 +3101,7 @@ app.post('/api/backup/restore', restoreUpload.single('backup'), async (req, res)
         // Detach and cleanup even on errors
         db.exec('PRAGMA foreign_keys = ON');
         db.exec('DETACH DATABASE backup_db');
-        try { fs.unlinkSync(tempDbPath); } catch (e) {}
+        try { fs.unlinkSync(tempDbPath); } catch (e) { }
       }
     }
 
@@ -3086,14 +3164,14 @@ app.post('/api/backup/delete-selective', async (req, res) => {
 
   try {
     const tableMap = {
-      transactions:      ['DELETE FROM transaction_items', 'DELETE FROM transactions'],
-      products:          ['DELETE FROM products'],
-      categories:        ['DELETE FROM categories'],
-      suppliers:         ['DELETE FROM suppliers'],
-      purchase_orders:   ['DELETE FROM purchase_order_items', 'DELETE FROM purchase_orders'],
+      transactions: ['DELETE FROM transaction_items', 'DELETE FROM transactions'],
+      products: ['DELETE FROM products'],
+      categories: ['DELETE FROM categories'],
+      suppliers: ['DELETE FROM suppliers'],
+      purchase_orders: ['DELETE FROM purchase_order_items', 'DELETE FROM purchase_orders'],
       stock_adjustments: ['DELETE FROM stock_adjustments'],
-      activity_logs:     ['DELETE FROM activity_logs'],
-      audit_logs:        ['DELETE FROM audits'],
+      activity_logs: ['DELETE FROM activity_logs'],
+      audit_logs: ['DELETE FROM audits'],
     };
 
     db.exec('PRAGMA foreign_keys = OFF');
@@ -3120,7 +3198,7 @@ app.post('/api/backup/delete-selective', async (req, res) => {
       if (fs.existsSync(uploadsPath)) {
         const files = fs.readdirSync(uploadsPath);
         for (const file of files) {
-          try { fs.unlinkSync(path.join(uploadsPath, file)); } catch {}
+          try { fs.unlinkSync(path.join(uploadsPath, file)); } catch { }
         }
       }
       deleted.push('product_images');

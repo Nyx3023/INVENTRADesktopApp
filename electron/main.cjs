@@ -105,6 +105,7 @@ async function applyInstallerSetupIfPresent(runtimeDir) {
         email: String(setupValues.storeEmail || '').trim(),
         phone: String(setupValues.storePhone || '').trim(),
         address: String(setupValues.storeAddress || '').trim(),
+        businessHours: String(setupValues.storeHours || '').trim(),
       },
       admin: {
         name: String(setupValues.adminName || 'Administrator').trim() || 'Administrator',

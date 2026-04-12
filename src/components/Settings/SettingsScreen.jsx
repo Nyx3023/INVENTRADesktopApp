@@ -9,6 +9,7 @@ import UserManagement from './UserManagement';
 import BackupRestoreScreen from './BackupRestoreScreen';
 import { useGlobalBarcode } from '../../context/BarcodeContext';
 import { savePrinterSettings, getPrinterSettings } from '../../constants/thermalPrinter';
+import jboLogo from '../../assets/jbologo.png';
 
 const SettingsScreen = () => {
   const { user } = useAuth();
@@ -130,6 +131,7 @@ const SettingsScreen = () => {
 const GeneralSettings = ({ settings, handleChange, handleSubmit, colors, user }) => {
   const { t, updateSettings } = useSettings();
   const [isEditing, setIsEditing] = useState(false);
+  const [showDefaultsModal, setShowDefaultsModal] = useState(false);
   const [storeInfo, setStoreInfo] = useState({
     storeName: 'JBO Arts & Crafts Trading',
     tagline: 'Your trusted partner for arts and crafts supplies',
@@ -137,7 +139,7 @@ const GeneralSettings = ({ settings, handleChange, handleSubmit, colors, user })
     phone: '0932 868 7911',
     address: '#303 B1A J.R. Blvd Tagapo, Santa Rosa, Philippines',
     businessHours: 'Mon-Sat: 8:00 AM - 6:00 PM',
-    logoUrl: ''
+    logoUrl: jboLogo
   });
   const fileInputRef = useRef(null);
 
@@ -238,6 +240,7 @@ const GeneralSettings = ({ settings, handleChange, handleSubmit, colors, user })
   };
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className={`${colors.card.primary} rounded-lg shadow border ${colors.border.primary} p-6`}>
         <div className="flex items-center justify-between mb-6">
@@ -529,12 +532,92 @@ const GeneralSettings = ({ settings, handleChange, handleSubmit, colors, user })
           </p>
         </div>
       </div>
-      <div className="flex justify-end">
+      <div className="flex justify-between">
+        <button
+          type="button"
+          onClick={() => setShowDefaultsModal(true)}
+          className="px-4 py-2 rounded-lg bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-900/50 font-medium transition-colors"
+        >
+          Restore Defaults
+        </button>
         <button type="submit" className="btn-primary">
           {t('save')} Settings
         </button>
       </div>
     </form>
+
+    {/* Restore Defaults Confirmation Modal */}
+    {showDefaultsModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm">
+        <div className={`${colors.card.primary} rounded-2xl shadow-2xl max-w-md w-full border ${colors.border.primary}`}>
+          <div className={`flex items-center gap-3 p-6 border-b ${colors.border.primary}`}>
+            <div className="p-2 bg-amber-100 dark:bg-amber-900/20 rounded-full">
+              <svg className="w-6 h-6 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
+            <h3 className={`text-lg font-bold ${colors.text.primary}`}>Restore Default Settings</h3>
+          </div>
+          <div className="p-6">
+            <p className={`${colors.text.secondary} mb-4`}>
+              This will reset the following to their default values:
+            </p>
+            <ul className={`text-sm ${colors.text.secondary} space-y-1.5 mb-2 list-disc list-inside`}>
+              <li>Store information (name, email, phone, address, hours)</li>
+              <li>Store logo</li>
+              <li>Tax rate (0%)</li>
+              <li>Low stock threshold (10)</li>
+              <li>Receipt footer</li>
+            </ul>
+          </div>
+          <div className={`flex justify-end gap-3 p-6 border-t ${colors.border.primary}`}>
+            <button
+              type="button"
+              onClick={() => setShowDefaultsModal(false)}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${colors.text.secondary} hover:bg-gray-100 dark:hover:bg-slate-700`}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                setShowDefaultsModal(false);
+                const defaultStoreInfo = {
+                  storeName: 'JBO Arts & Crafts Trading',
+                  tagline: 'Your trusted partner for arts and crafts supplies',
+                  email: 'jboartsandcrafts@gmail.com',
+                  phone: '0932 868 7911',
+                  address: '#303 B1A J.R. Blvd Tagapo, Santa Rosa, Philippines',
+                  businessHours: 'Mon-Sat: 8:00 AM - 6:00 PM',
+                  logoUrl: jboLogo
+                };
+                setStoreInfo(defaultStoreInfo);
+                try {
+                  await fetch('/api/store-info', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(defaultStoreInfo),
+                  });
+                } catch (e) {
+                  console.error('Error saving default store info:', e);
+                }
+                localStorage.setItem('storeInfo', JSON.stringify(defaultStoreInfo));
+                handleChange({ target: { name: 'taxRate', value: 0 } });
+                handleChange({ target: { name: 'lowStockThreshold', value: 10 } });
+                handleChange({ target: { name: 'receiptFooter', value: '' } });
+                updateSettings({ taxRate: 0, lowStockThreshold: 10, receiptFooter: '' });
+                setIsEditing(false);
+                toast.success('All settings restored to defaults!');
+              }}
+              className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-medium transition-colors"
+            >
+              Restore Defaults
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 };
 
@@ -547,6 +630,7 @@ function CategoryManager() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [categoryToDelete, setCategoryToDelete] = useState(null);
 
   const load = async () => {
     try {
@@ -576,11 +660,16 @@ function CategoryManager() {
     }
   };
 
-  const remove = async (catName) => {
-    if (!window.confirm(`Are you sure you want to remove "${catName}"?`)) return;
+  const remove = (catName) => {
+    setCategoryToDelete(catName);
+  };
+
+  const confirmRemove = async () => {
+    if (!categoryToDelete) return;
     try {
-      await categoryService.delete(catName);
+      await categoryService.delete(categoryToDelete);
       toast.success('Category removed successfully');
+      setCategoryToDelete(null);
       await load();
     } catch (error) {
       toast.error('Failed to remove category');
@@ -708,6 +797,42 @@ function CategoryManager() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Category Confirmation Modal */}
+      {categoryToDelete && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+          onClick={() => setCategoryToDelete(null)}
+        >
+          <div
+            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-sm`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
+              <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Remove Category</h3>
+            </div>
+            <div className="px-6 py-4">
+              <p className={`${colors.text.secondary}`}>
+                Are you sure you want to remove <strong className={colors.text.primary}>"{categoryToDelete}"</strong>?
+              </p>
+            </div>
+            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
+              <button
+                onClick={() => setCategoryToDelete(null)}
+                className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRemove}
+                className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 transition-colors"
+              >
+                Remove
+              </button>
+            </div>
           </div>
         </div>
       )}

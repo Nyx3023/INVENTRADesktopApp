@@ -59,11 +59,15 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\jbologo.ico"; Tasks: desktopicon
 
+[UninstallDelete]
+Type: filesandordirs; Name: "{userappdata}\INVENTRA"
+
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 var
+  StoreTypePage: TInputOptionWizardPage;
   StorePage: TInputQueryWizardPage;
   AdminPage: TInputQueryWizardPage;
   StoreName: string;
@@ -77,8 +81,19 @@ var
 
 procedure InitializeWizard;
 begin
-  StorePage := CreateInputQueryPage(
+  StoreTypePage := CreateInputOptionPage(
     wpSelectDir,
+    'Store Type',
+    'Select Store Configuration',
+    'Is this a new store or the default store (JBO Arts & Crafts Trading)?',
+    True, False
+  );
+  StoreTypePage.Add('New Store (Configure custom store details)');
+  StoreTypePage.Add('Default Store (JBO Arts & Crafts Trading - Restore existing data backups)');
+  StoreTypePage.Values[0] := True; // Default to new store
+
+  StorePage := CreateInputQueryPage(
+    StoreTypePage.ID,
     'Store Information',
     'Configure store details',
     'These values are applied automatically on first launch.'
@@ -107,6 +122,17 @@ begin
   AdminPage.Values[2] := '';
   AdminPage.Add('Confirm Admin Password *', True);
   AdminPage.Values[3] := '';
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  // If "Default Store" is selected (index 1 is True), skip custom setup pages
+  if StoreTypePage.Values[1] then
+  begin
+    if (PageID = StorePage.ID) or (PageID = AdminPage.ID) then
+      Result := True;
+  end;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -202,12 +228,48 @@ begin
 
     SetupIniPath := RuntimeDataDir + '\installer-setup.ini';
 
-    SetIniString('setup', 'storeName', StoreName, SetupIniPath);
-    SetIniString('setup', 'storeEmail', StoreEmail, SetupIniPath);
-    SetIniString('setup', 'storePhone', StorePhone, SetupIniPath);
-    SetIniString('setup', 'storeAddress', StoreAddress, SetupIniPath);
-    SetIniString('setup', 'adminName', AdminName, SetupIniPath);
-    SetIniString('setup', 'adminEmail', AdminEmail, SetupIniPath);
-    SetIniString('setup', 'adminPassword', AdminPassword, SetupIniPath);
+    if StoreTypePage.Values[1] then
+    begin
+      { Write default store details for JBO Arts & Crafts }
+      SetIniString('setup', 'storeName', 'JBO Arts and Crafts Trading', SetupIniPath);
+      SetIniString('setup', 'storeEmail', 'jboartsandcrafts@gmail.com', SetupIniPath);
+      SetIniString('setup', 'storePhone', '0932 868 7911', SetupIniPath);
+      SetIniString('setup', 'storeAddress', '#303 B1A J.R. Blvd Tagapo, Santa Rosa, Philippines', SetupIniPath);
+      SetIniString('setup', 'storeHours', '8 am to 5 pm', SetupIniPath);
+      SetIniString('setup', 'adminEmail', 'admin@gmail.com', SetupIniPath);
+      SetIniString('setup', 'adminPassword', 'admin123', SetupIniPath);
+      SetIniString('setup', 'isDefaultStore', 'true', SetupIniPath);
+    end
+    else
+    begin
+      { Write custom store details }
+      SetIniString('setup', 'storeName', StoreName, SetupIniPath);
+      SetIniString('setup', 'storeEmail', StoreEmail, SetupIniPath);
+      SetIniString('setup', 'storePhone', StorePhone, SetupIniPath);
+      SetIniString('setup', 'storeAddress', StoreAddress, SetupIniPath);
+      SetIniString('setup', 'adminName', AdminName, SetupIniPath);
+      SetIniString('setup', 'adminEmail', AdminEmail, SetupIniPath);
+      SetIniString('setup', 'adminPassword', AdminPassword, SetupIniPath);
+    end;
+  end;
+
+  if CurStep = ssDone then
+  begin
+    if StoreTypePage.Values[1] then
+    begin
+      MsgBox('Installation complete.' + #13#10#13#10 +
+             'You have selected the Default Store.' + #13#10 +
+             'Please open the application and use the Data Restoration feature to restore your existing backups.' + #13#10#13#10 +
+             'Default Login Credentials:' + #13#10 +
+             'Email: admin@gmail.com' + #13#10 +
+             'Password: admin123', mbInformation, MB_OK);
+    end
+    else
+    begin
+      MsgBox('Installation complete.' + #13#10#13#10 +
+             'Your standard login credentials are:' + #13#10 +
+             'Email: ' + AdminEmail + #13#10 +
+             'Password: As provided during setup', mbInformation, MB_OK);
+    end;
   end;
 end;

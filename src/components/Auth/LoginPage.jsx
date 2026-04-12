@@ -10,7 +10,7 @@ const LoginPage = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [showDefaultCredentials, setShowDefaultCredentials] = useState(false);
+
   const [showPassword, setShowPassword] = useState(false);
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
   const [storeInfo, setStoreInfo] = useState({
@@ -65,14 +65,12 @@ const LoginPage = ({ onLogin }) => {
         navigate('/');
       } else {
         toast.error(data.message || 'Login failed');
-        setShowDefaultCredentials(true);
       }
     } catch (error) {
       console.error('Login error:', error);
       const errorMessage = error?.message || 'Login failed';
       if (errorMessage.includes('Invalid email') || errorMessage.includes('INVALID_CREDENTIALS')) {
         toast.error('Invalid email or password');
-        setShowDefaultCredentials(true);
       } else {
         toast.error('Connection error. Please try again.');
       }
@@ -81,11 +79,7 @@ const LoginPage = ({ onLogin }) => {
     }
   };
 
-  const fillDefaultCredentials = () => {
-    setEmail('admin@gmail.com');
-    setPassword('admin123');
-    toast.success('Default credentials filled!');
-  };
+
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 p-4">
@@ -118,7 +112,7 @@ const LoginPage = ({ onLogin }) => {
                       onChange={(e) => setEmail(e.target.value)}
                       required
                       className="w-full pl-10 pr-4 py-3 rounded-lg border-2 border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-purple-500 dark:focus:border-purple-400 focus:ring-2 focus:ring-purple-200 dark:focus:ring-purple-900 transition-all"
-                      placeholder="admin@gmail.com"
+                      placeholder="Email"
                     />
                   </div>
                 </div>
@@ -189,25 +183,6 @@ const LoginPage = ({ onLogin }) => {
                   {isLoading ? 'Logging in...' : 'Login'}
                 </button>
 
-                {/* Default Credentials Helper */}
-                {showDefaultCredentials && (
-                  <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                    <p className="text-sm text-blue-800 dark:text-blue-200 font-medium mb-2">
-                      🔐 First time? Use default credentials:
-                    </p>
-                    <div className="text-xs text-blue-700 dark:text-blue-300 space-y-1 mb-3">
-                      <p><strong>Email:</strong> admin@gmail.com</p>
-                      <p><strong>Password:</strong> admin123</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={fillDefaultCredentials}
-                      className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 underline font-medium"
-                    >
-                      Click to auto-fill
-                    </button>
-                  </div>
-                )}
 
               </form>
             </div>
