@@ -3,7 +3,8 @@ import { toast } from 'react-hot-toast';
 import { useTheme } from '../../context/ThemeContext';
 import { formatDate } from '../../utils/formatters';
 import { formatDetailsForTable, formatDetailsForModal } from '../../utils/logFormatters';
-import { activityLogService } from '../../services/api';
+import { activityLogService, userService } from '../../services/api';
+import * as XLSX from 'xlsx';
 import {
   ClipboardDocumentListIcon,
   FunnelIcon,
@@ -23,6 +24,7 @@ import {
   PrinterIcon,
   TruckIcon,
   ClipboardDocumentCheckIcon,
+  ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline';
 
 // Action icon mapping
@@ -101,6 +103,8 @@ const formatActionName = (action) => {
 const LogsScreen = () => {
   const { colors } = useTheme();
   const [logs, setLogs] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [isExporting, setIsExporting] = useState(false);
   const [totalLogs, setTotalLogs] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
@@ -115,6 +119,7 @@ const LogsScreen = () => {
   // Filters
   const [filters, setFilters] = useState({
     action: '',
+    userId: '',
     startDate: '',
     endDate: '',
   });
@@ -128,6 +133,7 @@ const LogsScreen = () => {
         limit: logsPerPage,
         offset,
         ...(filters.action && { action: filters.action }),
+        ...(filters.userId && { userId: filters.userId }),
         ...(filters.startDate && { startDate: filters.startDate }),
         ...(filters.endDate && { endDate: filters.endDate }),
       };
@@ -152,13 +158,69 @@ const LogsScreen = () => {
     }
   }, []);
 
+  const loadUsers = useCallback(async () => {
+    try {
+      const response = await userService.list();
+      const userList = Array.isArray(response) ? response : (response?.users || []);
+      setUsers(userList);
+    } catch (error) {
+      console.error('Error loading users:', error);
+    }
+  }, []);
+
+  const exportToExcel = async () => {
+    try {
+      setIsExporting(true);
+      const params = {
+        limit: 10000,
+        offset: 0,
+        ...(filters.action && { action: filters.action }),
+        ...(filters.userId && { userId: filters.userId }),
+        ...(filters.startDate && { startDate: filters.startDate }),
+        ...(filters.endDate && { endDate: filters.endDate }),
+      };
+
+      const response = await activityLogService.list(params);
+      const exportLogs = response.logs || [];
+
+      if (exportLogs.length === 0) {
+        toast.error('No logs found to export');
+        setIsExporting(false);
+        return;
+      }
+
+      const exportData = exportLogs.map(log => ({
+        'Time': formatDate(log.created_at),
+        'User Name': log.user_name || 'System',
+        'User Email': log.user_email || '-',
+        'Action': formatActionName(log.action),
+        'Details': typeof log.details === 'string' ? log.details : JSON.stringify(log.details || {}),
+        'Entity Type': log.entity_type || '-',
+        'Entity ID': log.entity_id || '-',
+        'IP Address': log.ip_address || '-'
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Activity Logs');
+      XLSX.writeFile(workbook, `Activity_Logs_${new Date().toISOString().split('T')[0]}.xlsx`);
+      toast.success('Exported successfully');
+    } catch (error) {
+      console.error('Export failed:', error);
+      toast.error('Failed to export to Excel');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   useEffect(() => {
     loadLogs();
   }, [loadLogs]);
 
   useEffect(() => {
     loadActionTypes();
-  }, [loadActionTypes]);
+    loadUsers();
+  }, [loadActionTypes, loadUsers]);
 
   const totalPages = Math.ceil(totalLogs / logsPerPage);
 
@@ -169,7 +231,7 @@ const LogsScreen = () => {
   };
 
   const clearFilters = () => {
-    setFilters({ action: '', startDate: '', endDate: '' });
+    setFilters({ action: '', userId: '', startDate: '', endDate: '' });
     setCurrentPage(1);
   };
 
@@ -207,10 +269,19 @@ const LogsScreen = () => {
 
           <div className="flex items-center gap-3">
             <button
+              onClick={exportToExcel}
+              disabled={isExporting}
+              className={`px-4 py-2 rounded-xl font-medium transition-all duration-200 flex items-center gap-2 ${colors.bg.tertiary} ${colors.text.secondary} hover:${colors.text.primary} ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <ArrowDownTrayIcon className={`h-5 w-5 ${isExporting ? 'animate-bounce' : ''}`} />
+              <span>{isExporting ? 'Exporting...' : 'Export to Excel'}</span>
+            </button>
+
+            <button
               onClick={() => setShowFilters(!showFilters)}
               className={`px-4 py-2 rounded-xl font-medium transition-all duration-200 flex items-center gap-2 ${showFilters
-                  ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
-                  : `${colors.bg.tertiary} ${colors.text.secondary} hover:${colors.text.primary}`
+                ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
+                : `${colors.bg.tertiary} ${colors.text.secondary} hover:${colors.text.primary}`
                 }`}
             >
               <FunnelIcon className="h-5 w-5" />
@@ -230,7 +301,26 @@ const LogsScreen = () => {
         {/* Filters */}
         {showFilters && (
           <div className={`mt-6 pt-6 border-t ${colors.border.primary}`}>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${colors.text.primary}`}>
+                  User
+                </label>
+                <select
+                  name="userId"
+                  value={filters.userId}
+                  onChange={handleFilterChange}
+                  className={`w-full p-3 rounded-xl border ${colors.input.primary}`}
+                >
+                  <option value="">All Users</option>
+                  {users.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className={`block text-sm font-medium mb-2 ${colors.text.primary}`}>
                   Action Type
@@ -385,8 +475,8 @@ const LogsScreen = () => {
                 onClick={() => goToPage(currentPage - 1)}
                 disabled={currentPage === 1}
                 className={`p-2 rounded-lg ${currentPage === 1
-                    ? `${colors.text.tertiary} cursor-not-allowed`
-                    : `${colors.text.secondary} hover:${colors.bg.secondary}`
+                  ? `${colors.text.tertiary} cursor-not-allowed`
+                  : `${colors.text.secondary} hover:${colors.bg.secondary}`
                   }`}
               >
                 <ChevronLeftIcon className="h-5 w-5" />
@@ -400,8 +490,8 @@ const LogsScreen = () => {
                 onClick={() => goToPage(currentPage + 1)}
                 disabled={currentPage === totalPages}
                 className={`p-2 rounded-lg ${currentPage === totalPages
-                    ? `${colors.text.tertiary} cursor-not-allowed`
-                    : `${colors.text.secondary} hover:${colors.bg.secondary}`
+                  ? `${colors.text.tertiary} cursor-not-allowed`
+                  : `${colors.text.secondary} hover:${colors.bg.secondary}`
                   }`}
               >
                 <ChevronRightIcon className="h-5 w-5" />

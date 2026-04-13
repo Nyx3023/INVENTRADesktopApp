@@ -185,6 +185,37 @@ const POSScreen = () => {
       if (e.defaultPrevented) {
         return;
       }
+      
+      if (e.key === 'F8') {
+        e.preventDefault();
+        const searchInput = document.getElementById('pos-search-input');
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select();
+        }
+        return;
+      }
+      
+      if (e.key === 'F9') {
+        e.preventDefault();
+        if (cart.length > 0 && !showCheckout) {
+          setShowCheckout(true);
+        }
+        return;
+      }
+      
+      if (e.key === 'F10') {
+        e.preventDefault();
+        if (cart.length > 0 && !showCheckout) {
+          if (user?.role === 'admin') {
+            setShowRestartConfirmation(true);
+          } else {
+            setShowRestartPasswordModal(true);
+          }
+        }
+        return;
+      }
+
       if (e.key === 'Escape') {
         if (showCheckout) {
           e.preventDefault();
@@ -228,7 +259,7 @@ const POSScreen = () => {
     };
     document.addEventListener('keydown', handleGlobalKeys, true);
     return () => document.removeEventListener('keydown', handleGlobalKeys, true);
-  }, [showCheckout, cart, isProcessing, paymentMethod, receivedAmount, referenceNumber]);
+  }, [showCheckout, cart, isProcessing, paymentMethod, receivedAmount, referenceNumber, user]);
 
   // Handle global barcode scanning
   useEffect(() => {
@@ -894,8 +925,9 @@ const POSScreen = () => {
                 <div className="relative">
                   <MagnifyingGlassIcon className={`absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 ${colors.text.tertiary}`} />
                   <input
+                    id="pos-search-input"
                     type="text"
-                    placeholder="Search products..."
+                    placeholder="Search products (F8)..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className={`w-full pl-9 pr-3 py-2 rounded-lg border ${colors.input.primary}`}
@@ -968,7 +1000,7 @@ const POSScreen = () => {
                     setShowRestartPasswordModal(true);
                   }
                 }}
-                title="Restart Transaction"
+                title="Restart Transaction (F10)"
               >
                 <TrashIcon className="h-5 w-5" />
               </button>
@@ -1070,7 +1102,7 @@ const POSScreen = () => {
                   disabled={cart.length === 0}
                   className={`w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 dark:from-blue-500 dark:to-indigo-500 text-white rounded-xl font-bold shadow-lg shadow-blue-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none transition-all duration-300 transform active:scale-[0.98] mt-2`}
                 >
-                  Proceed to Checkout
+                  Proceed to Checkout (F9)
                 </button>
               </div>
             </div>

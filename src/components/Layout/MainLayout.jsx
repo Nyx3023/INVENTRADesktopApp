@@ -5,6 +5,7 @@ import { useSettings } from '../../context/SettingsContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useGlobalBarcode } from '../../context/BarcodeContext';
 import { useNavigationBlocker } from '../../context/NavigationBlockerContext';
+import useSystemShortcuts from '../../hooks/useSystemShortcuts';
 import {
   HomeIcon,
   ShoppingCartIcon,
@@ -44,6 +45,13 @@ const MainLayout = () => {
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
   const [showNavModal, setShowNavModal] = useState(false);
   const [attemptedPath, setAttemptedPath] = useState(null);
+
+  const handleShortcutIntercept = (path, shouldLogout) => {
+    setAttemptedPath(shouldLogout ? '/login' : path);
+    setShowNavModal(true);
+  };
+  useSystemShortcuts(handleShortcutIntercept);
+
   const [printerStatus, setPrinterStatus] = useState({
     available: false,
     connected: false,
@@ -173,11 +181,11 @@ const MainLayout = () => {
 
   // Navigation items - Audits and Purchase Products are now inside Inventory
   const navigation = [
-    { name: t('dashboard'), icon: HomeIcon, href: '/', gradient: 'from-blue-500 to-blue-600' },
-    { name: t('inventory'), icon: CubeIcon, href: '/inventory', gradient: 'from-emerald-500 to-emerald-600', permission: 'view_inventory' },
+    { name: t('dashboard'), icon: HomeIcon, href: '/', gradient: 'from-blue-500 to-blue-600', shortcut: 'F1' },
+    { name: t('inventory'), icon: CubeIcon, href: '/inventory', gradient: 'from-emerald-500 to-emerald-600', permission: 'view_inventory', shortcut: 'F3' },
     { name: 'Reports', icon: ChartBarIcon, href: '/statistical-reports', gradient: 'from-teal-500 to-teal-600', permission: 'view_statistical_reports' },
-    { name: t('sales'), icon: DocumentTextIcon, href: '/sales', gradient: 'from-amber-500 to-amber-600', permission: 'view_sales_history' },
-    { name: 'Point of Sale', icon: CalculatorIcon, href: '/pos', gradient: 'from-purple-500 to-purple-600', permission: 'process_sales' },
+    { name: t('sales'), icon: DocumentTextIcon, href: '/sales', gradient: 'from-amber-500 to-amber-600', permission: 'view_sales_history', shortcut: 'F4' },
+    { name: 'Point of Sale', icon: CalculatorIcon, href: '/pos', gradient: 'from-purple-500 to-purple-600', permission: 'process_sales', shortcut: 'F2' },
   ].filter(nav => !nav.permission || hasPermission(nav.permission));
 
   const isActivePath = (path) => {
@@ -266,6 +274,7 @@ const MainLayout = () => {
                   to={item.href}
                   className={`brand-tab ${active ? 'brand-tab-active' : ''}`}
                   onClick={(e) => handleNavigationClick(e, item.href)}
+                  title={item.shortcut ? `${item.name} (${item.shortcut})` : item.name}
                 >
                   {String(item.name).toUpperCase()}
                 </Link>
@@ -308,7 +317,7 @@ const MainLayout = () => {
                 onClick={(e) => handleNavigationClick(e, '/logs')}
                 className={`hidden sm:inline-flex p-2 rounded-lg transition-all duration-200 text-white/80 hover:bg-white/10 ${isActivePath('/logs') ? 'bg-white/10' : ''
                   }`}
-                title="Activity Logs"
+                title="Activity Logs (F6)"
               >
                 <ClipboardDocumentListIcon className="h-6 w-6" />
               </Link>
@@ -331,7 +340,7 @@ const MainLayout = () => {
               onClick={(e) => handleNavigationClick(e, '/settings')}
               className={`hidden sm:inline-flex p-2 rounded-lg transition-all duration-200 text-white/80 hover:bg-white/10 ${isActivePath('/settings') ? 'bg-white/10' : ''
                 }`}
-              title="Settings"
+              title="Settings (Alt+S)"
             >
               <Cog6ToothIcon className="h-6 w-6" />
             </Link>
@@ -339,7 +348,7 @@ const MainLayout = () => {
             <button
               onClick={handleLogout}
               className={`hidden sm:inline-flex p-2 rounded-lg transition-all duration-200 text-white/80 hover:bg-white/10`}
-              title="Logout"
+              title="Logout (Alt+L)"
             >
               <ArrowRightOnRectangleIcon className="h-6 w-6" />
             </button>
@@ -347,7 +356,7 @@ const MainLayout = () => {
             <button
               onClick={toggleTheme}
               className={`p-2 rounded-lg transition-all duration-200 text-white/80 hover:bg-white/10`}
-              title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              title={isDarkMode ? 'Switch to Light Mode (Alt+T)' : 'Switch to Dark Mode (Alt+T)'}
             >
               {isDarkMode ? (
                 <SunIcon className="h-6 w-6" />
