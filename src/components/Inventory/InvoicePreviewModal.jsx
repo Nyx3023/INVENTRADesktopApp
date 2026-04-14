@@ -109,139 +109,174 @@ const InvoicePreviewModal = ({
         {/* Paper Container */}
         <div className={`flex-1 overflow-y-auto p-4 sm:p-8 bg-gray-100 dark:bg-gray-900 flex justify-center`}>
           
-          {/* Virtual A4 Paper Container */}
-          <div className="bg-white w-full max-w-[800px] min-h-[600px] shadow-2xl p-6 sm:p-10 font-sans text-gray-900 relative">
+          {/* Virtual Form Container matching PDF */}
+          <div className="bg-white w-full max-w-[800px] min-h-[600px] shadow-2xl p-8 font-sans text-gray-900 relative border hover:border-gray-300 flex flex-col transition-all">
             
-            {/* Paper Header */}
-            <div className="flex justify-between items-start border-b-[3px] border-yellow-500 pb-6 mb-8">
+            {/* Header */}
+            <div className="flex justify-between items-start mb-6">
                <div>
-                  <h1 className="text-3xl font-black text-gray-800 tracking-tight">{storeInfo.storeName}</h1>
-                  <div className="mt-2 text-sm text-gray-500 space-y-1">
-                     <p>{storeInfo.address}</p>
-                     <p>{storeInfo.phone} • {storeInfo.email}</p>
-                  </div>
+                  <p className="text-sm mb-1 text-gray-600">Purchase Order #</p>
+                  <p className="border-b border-gray-400 pb-0.5 w-48 font-bold text-lg">{draft?.id || '—'}</p>
                </div>
                <div className="text-right">
-                  <h2 className="text-4xl font-bold text-gray-300 tracking-widest uppercase mb-2">Invoice</h2>
-                  <p className="text-sm font-semibold text-gray-600">No. <span className="text-gray-400 font-normal">DRAFT</span></p>
-                  <p className="text-sm font-semibold text-gray-600">Date: <span className="text-gray-400 font-normal">{new Date().toLocaleDateString()}</span></p>
+                  <h1 className="text-3xl font-black text-gray-800 tracking-tight">{storeInfo.storeName}</h1>
+                  <p className="text-sm text-gray-700 mt-2">{storeInfo.address}</p>
+                  <p className="text-sm text-gray-700">{storeInfo.email}</p>
+                  <p className="text-sm text-gray-700">{storeInfo.phone}</p>
                </div>
             </div>
 
-            {/* Bill To & Supplier */}
-            <div className="grid grid-cols-2 gap-8 mb-10 text-sm">
-                <div>
-                  <h3 className="font-bold text-gray-800 mb-2 border-b pb-1">BILL TO</h3>
-                  <p className="font-semibold">{storeInfo.storeName}</p>
-                  <p className="text-gray-600 mt-1">{storeInfo.address}</p>
-                  <p className="text-gray-600">{storeInfo.phone}</p>
+            {/* Grid Form */}
+            <div className="grid grid-cols-2 border border-gray-400 mb-6 text-sm">
+                {/* Left Side */}
+                <div className="border-r border-gray-400">
+                  <div className="flex border-b border-gray-400">
+                    <div className="w-24 py-1.5 px-3 border-r border-gray-400 text-gray-600">Name:</div>
+                    <div className="py-1.5 px-3 flex-1 font-semibold">{supplier?.name || '—'}</div>
+                  </div>
+                  <div className="flex border-b border-gray-400">
+                    <div className="w-24 py-1.5 px-3 border-r border-gray-400 text-gray-600">Phone:</div>
+                    <div className="py-1.5 px-3 flex-1 font-semibold">{supplier?.phone || '—'}</div>
+                  </div>
+                  <div className="flex border-b border-gray-400">
+                    <div className="w-24 py-1.5 px-3 border-r border-gray-400 text-gray-600">Email:</div>
+                    <div className="py-1.5 px-3 flex-1 font-semibold">{supplier?.email || '—'}</div>
+                  </div>
+                  <div className="flex">
+                    <div className="w-24 py-1.5 px-3 border-r border-gray-400 text-gray-600">Address:</div>
+                    <div className="py-1.5 px-3 flex-1 font-semibold">{supplier?.address || '—'}</div>
+                  </div>
                 </div>
+
+                {/* Right Side */}
                 <div>
-                  <h3 className="font-bold text-gray-800 mb-2 border-b pb-1">SUPPLIER</h3>
-                  {!supplier ? (
-                     <p className="text-gray-400 italic">No supplier selected</p>
-                  ) : (
-                     <>
-                        <p className="font-semibold text-blue-600 underline decoration-dotted">{supplier.name}</p>
-                        <p className="text-gray-600 mt-1">{supplier.address || 'No address provided'}</p>
-                        <p className="text-gray-600">{supplier.phone || ''}</p>
-                     </>
-                  )}
+                  <div className="flex border-b border-gray-400">
+                    <div className="w-28 py-1.5 px-3 border-r border-gray-400 text-gray-600">Date:</div>
+                    <div className="py-1.5 px-3 flex-1 font-semibold">{new Date().toLocaleDateString()}</div>
+                  </div>
+                  <div className="flex border-b border-gray-400">
+                    <div className="w-28 py-1.5 px-3 border-r border-gray-400 text-gray-600">Order Status:</div>
+                    <div className="py-1.5 px-3 flex-1 font-bold text-amber-600">DRAFT</div>
+                  </div>
+                  <div className="flex border-b border-gray-400">
+                    <div className="w-28 py-1.5 px-3 border-r border-gray-400 text-gray-600">Tracking Ref:</div>
+                    <div className="py-1.5 px-3 flex-1 text-gray-400">—</div>
+                  </div>
+                  <div className="flex">
+                    <div className="w-28 py-1.5 px-3 border-r border-gray-400 text-gray-600">Delivery Term:</div>
+                    <div className="py-1.5 px-3 flex-1 text-gray-400">—</div>
+                  </div>
                 </div>
             </div>
 
             {/* Interactive Items Table */}
-            <div className="mb-10">
-               <table className="w-full text-left border-collapse">
+            <div className="mb-auto">
+               <table className="w-full text-left border-collapse border border-gray-400">
                   <thead>
-                     <tr className="bg-yellow-50 text-gray-800 text-sm">
-                        <th className="py-3 px-4 border-b-2 border-yellow-200 font-bold w-1/2">ITEM DESCRIPTION</th>
-                        <th className="py-3 px-4 border-b-2 border-yellow-200 font-bold text-center w-24">QTY</th>
-                        <th className="py-3 px-4 border-b-2 border-yellow-200 font-bold text-right w-32">UNIT PRICE</th>
-                        <th className="py-3 px-4 border-b-2 border-yellow-200 font-bold text-right">LINE TOTAL</th>
+                     <tr className="bg-[#b4b4b4] text-black text-sm border-b border-gray-400">
+                        <th className="py-2 px-3 border-r border-gray-400 font-bold w-1/2 text-center">Item Description</th>
+                        <th className="py-2 px-3 border-r border-gray-400 font-bold text-center w-24">Quantity</th>
+                        <th className="py-2 px-3 border-r border-gray-400 font-bold text-center w-32">Unit price</th>
+                        <th className="py-2 px-3 font-bold text-center">Amount</th>
                      </tr>
                   </thead>
                   <tbody>
                      {draft.items.length === 0 ? (
                         <tr>
-                           <td colSpan="4" className="py-8 text-center text-gray-400 italic border-b">No items added to draft</td>
+                           <td colSpan="4" className="py-8 text-center text-gray-400 italic">No items added to draft</td>
                         </tr>
                      ) : (
                         draft.items.map((item, idx) => (
-                           <tr key={idx} className="border-b border-gray-100 hover:bg-blue-50/50 transition-colors group">
-                              <td className="py-3 px-4">
+                           <tr key={idx} className="border-b border-gray-400 hover:bg-gray-50 transition-colors group">
+                              <td className="py-1.5 px-3 border-r border-gray-400">
                                  <input 
                                     type="text" 
                                     value={item.productName} 
                                     onChange={(e) => handleUpdateItem(idx, 'productName', e.target.value)}
-                                    className="w-full bg-transparent border-0 border-b border-transparent focus:border-blue-300 focus:ring-0 p-0 text-sm font-semibold text-gray-800 transition-colors"
+                                    className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm focus:outline-none font-medium"
                                     placeholder="Product Name"
                                  />
                               </td>
-                              <td className="py-3 px-4 text-center">
+                              <td className="py-1.5 px-3 border-r border-gray-400 text-center">
                                  <input 
                                     type="number" 
                                     min="1"
                                     value={item.quantity} 
                                     onChange={(e) => handleUpdateItem(idx, 'quantity', e.target.value)}
-                                    className="w-full text-center bg-transparent border-0 border-b border-transparent focus:border-blue-300 focus:ring-0 p-0 text-sm text-gray-700 hover:bg-white rounded transition-colors"
+                                    className="w-full text-center bg-transparent border-none focus:ring-0 p-0 text-sm focus:outline-none text-gray-800"
                                  />
                               </td>
-                              <td className="py-3 px-4 text-right">
+                              <td className="py-1.5 px-3 border-r border-gray-400 text-right">
                                  <div className="flex items-center justify-end">
-                                    <span className="text-gray-400 text-xs mr-1">₱</span>
                                     <input 
                                        type="number" 
                                        min="0"
                                        step="0.01"
                                        value={item.unitCost} 
                                        onChange={(e) => handleUpdateItem(idx, 'unitCost', e.target.value)}
-                                       className="w-20 text-right bg-transparent border-0 border-b border-transparent focus:border-blue-300 focus:ring-0 p-0 text-sm text-gray-700 hover:bg-white rounded transition-colors"
+                                       className="w-full text-right bg-transparent border-none focus:ring-0 p-0 text-sm focus:outline-none text-gray-800"
                                     />
                                  </div>
                               </td>
-                              <td className="py-3 px-4 text-right text-sm font-medium text-gray-800">
+                              <td className="py-1.5 px-3 text-right text-sm font-medium">
                                  {formatCurrency(Number(item.quantity) * Number(item.unitCost || 0))}
                               </td>
                            </tr>
                         ))
                      )}
+                     {/* Padding rows similar to PDF template */}
+                     {[...Array(Math.max(0, 10 - draft.items.length))].map((_, i) => (
+                        <tr key={`pad-${i}`} className="border-b border-gray-400 h-8">
+                          <td className="border-r border-gray-400 bg-gray-50/50"></td>
+                          <td className="border-r border-gray-400 bg-gray-50/50"></td>
+                          <td className="border-r border-gray-400 bg-gray-50/50"></td>
+                          <td className="bg-gray-50/50"></td>
+                        </tr>
+                     ))}
                   </tbody>
                </table>
             </div>
 
-            {/* Totals Section */}
-            <div className="flex justify-between items-start">
-               <div className="w-1/2 pr-8">
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Notes / Instructions</label>
+            {/* Bottom Section */}
+            <div className="flex justify-between items-start mt-8 pb-4">
+               
+               {/* Notes Box */}
+               <div className="w-[45%]">
+                  <div className="bg-[#b4b4b4] border border-gray-400 border-b-0 py-1 text-center font-bold text-sm text-black">
+                    Notes
+                  </div>
                   <textarea
                      value={draft.notes}
                      onChange={(e) => handleUpdateNotes(e.target.value)}
-                     className="w-full bg-gray-50 border border-gray-100 rounded p-3 text-sm text-gray-600 focus:ring-1 focus:ring-yellow-400 focus:border-yellow-400 resize-none h-24 transition-shadow"
-                     placeholder="Enter any notes, terms, or order instructions here..."
+                     className="w-full bg-white border border-gray-400 p-2 text-sm text-gray-800 focus:outline-none resize-none h-20"
+                     placeholder="Enter any notes or instructions..."
                   />
                </div>
                
-               <div className="w-1/3">
-                  <div className="flex justify-between py-2 border-b border-gray-100">
-                     <span className="text-sm font-semibold text-gray-600">Subtotal</span>
-                     <span className="text-sm text-gray-800">{formatCurrency(calculateSubtotal())}</span>
+               {/* Totals Box */}
+               <div className="w-[45%] text-sm">
+                  <div className="flex justify-between py-1">
+                     <span className="w-24 text-gray-600">Subtotal:</span>
+                     <span className="flex-1 border-b border-black text-right pr-1 pb-0.5">{formatCurrency(calculateSubtotal())}</span>
                   </div>
-                  <div className="flex justify-between py-2 border-b border-gray-100">
-                     <span className="text-sm font-semibold text-gray-600">Discount</span>
-                     <span className="text-sm text-gray-400">0.00</span>
+                  <div className="flex justify-between py-1 mt-1">
+                     <span className="w-24 text-gray-600">Discount:</span>
+                     <span className="flex-1 border-b border-black text-right pr-1 pb-0.5">0.00</span>
                   </div>
-                  <div className="flex justify-between py-3 mt-2 border-t-2 border-yellow-400">
-                     <span className="text-lg font-black text-yellow-600">TOTAL</span>
-                     <span className="text-lg font-black text-gray-900">{formatCurrency(calculateSubtotal())}</span>
+                  <div className="flex justify-between py-1 mt-1">
+                     <span className="w-24 text-gray-600">Tax:</span>
+                     <span className="flex-1 border-b border-black text-right pr-1 pb-0.5">0.00</span>
+                  </div>
+                  <div className="flex justify-between py-1 mt-2 font-bold">
+                     <span className="w-24">Grand total:</span>
+                     <span className="flex-1 border-b-[1.5px] border-black text-right pr-1 pb-0.5 text-base">{formatCurrency(calculateSubtotal())}</span>
                   </div>
                </div>
             </div>
 
-            {/* Absolute Footer (relative to paper bottom padding) */}
-            <div className="absolute bottom-6 left-6 right-6 sm:bottom-10 sm:left-10 sm:right-10 border-t border-gray-200 pt-4 flex flex-wrap justify-between gap-4 text-xs text-gray-400">
-               <span>{storeInfo.phone} • {storeInfo.email}</span>
-               <span>Thank you for your business!</span>
+            {/* Print Footer */}
+            <div className="mt-4 pt-4 border-t border-gray-200 text-xs text-gray-500 font-sans tracking-wide">
+              {storeInfo.phone} • {storeInfo.email}
             </div>
 
           </div>

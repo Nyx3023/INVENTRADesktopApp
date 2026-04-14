@@ -3,11 +3,12 @@ import { toast } from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
 import { useTheme } from '../../context/ThemeContext';
-import { UserIcon, Cog6ToothIcon, Squares2X2Icon, PrinterIcon, PencilIcon, CheckIcon, XMarkIcon, PhotoIcon, PlusIcon, CircleStackIcon } from '@heroicons/react/24/outline';
+import { UserIcon, Cog6ToothIcon, Squares2X2Icon, PrinterIcon, PencilIcon, CheckIcon, XMarkIcon, PhotoIcon, PlusIcon, CircleStackIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
 import { categoryService } from '../../services/api';
 import UserManagement from './UserManagement';
 import BackupRestoreScreen from './BackupRestoreScreen';
 import { useGlobalBarcode } from '../../context/BarcodeContext';
+import HelpManualScreen from './HelpManualScreen';
 import { savePrinterSettings, getPrinterSettings } from '../../constants/thermalPrinter';
 import jboLogo from '../../assets/jbologo.png';
 
@@ -87,6 +88,14 @@ const SettingsScreen = () => {
       component: BackupRestoreScreen
     });
   }
+
+  // Help & Manual — visible to all users
+  tabs.push({
+    id: 'manual',
+    name: 'Help & Manual',
+    icon: QuestionMarkCircleIcon,
+    component: HelpManualScreen
+  });
 
   const ActiveComponent = tabs.find(tab => tab.id === activeTab)?.component || GeneralSettings;
 

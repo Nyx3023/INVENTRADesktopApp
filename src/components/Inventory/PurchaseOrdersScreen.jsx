@@ -961,7 +961,7 @@ const PurchaseOrdersScreen = () => {
             </div>
 
             {/* FIXED FOOTER - Order Summary & Actions */}
-            <div className={`px-6 py-4 border-t-2 ${colors.border.primary} flex-shrink-0`} style={{ backgroundColor: colors.bg.secondary === 'bg-gray-50' ? '#f9fafb' : '#1f2937' }}>
+            <div className={`px-6 py-4 border-t-2 ${colors.border.primary} flex-shrink-0 ${colors.bg.secondary}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-6">
                   <div>
@@ -1092,17 +1092,17 @@ const PurchaseOrdersScreen = () => {
         <ModalPortal>
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setShowReceipt(null)}>
           <div
-            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-lg`}
+            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-lg max-h-[90vh] flex flex-col`}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
+            <div className={`px-6 py-4 border-b ${colors.border.primary} flex-shrink-0`}>
               <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Purchase Order Receipt</h3>
               <p className={`${colors.text.secondary} text-sm`}>
                 PO #: {showReceipt.id} • {formatDate(showReceipt.order_date)}
               </p>
             </div>
 
-            <div className="px-6 py-4">
+            <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0">
               <div className="grid grid-cols-2 gap-4 mb-4">
                 <div>
                   <p className={`text-xs ${colors.text.secondary}`}>Supplier</p>
@@ -1191,7 +1191,7 @@ const PurchaseOrdersScreen = () => {
               </div>
             </div>
 
-            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-between`}>
+            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-between flex-shrink-0`}>
               <button
                 onClick={() => {
                   try {

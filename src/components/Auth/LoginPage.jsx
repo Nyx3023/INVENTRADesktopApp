@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { authService, activityLogService } from '../../services/api';
 import jboLogo from '../../assets/jbologo.png';
-import { EnvelopeIcon, LockClosedIcon, EyeIcon, EyeSlashIcon, XMarkIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
+import { EnvelopeIcon, LockClosedIcon, EyeIcon, EyeSlashIcon, XMarkIcon, InformationCircleIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
+import HelpManualScreen from '../Settings/HelpManualScreen';
 
 const LoginPage = ({ onLogin }) => {
   const [email, setEmail] = useState('');
@@ -13,6 +14,7 @@ const LoginPage = ({ onLogin }) => {
 
   const [showPassword, setShowPassword] = useState(false);
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
   const [storeInfo, setStoreInfo] = useState({
     storeName: 'JBO Arts & Crafts Trading'
   });
@@ -112,7 +114,7 @@ const LoginPage = ({ onLogin }) => {
                       onChange={(e) => setEmail(e.target.value)}
                       required
                       className="w-full pl-10 pr-4 py-3 rounded-lg border-2 border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-purple-500 dark:focus:border-purple-400 focus:ring-2 focus:ring-purple-200 dark:focus:ring-purple-900 transition-all"
-                      placeholder="Email"
+                      placeholder="Enter your email"
                     />
                   </div>
                 </div>
@@ -306,6 +308,33 @@ const LoginPage = ({ onLogin }) => {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Help Button */}
+      <div className="fixed bottom-6 right-6 z-50">
+        <button
+          type="button"
+          onClick={() => setShowHelpModal(true)}
+          className="p-3 bg-white dark:bg-slate-800 rounded-full shadow-lg border border-purple-100 dark:border-slate-700 hover:shadow-xl text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 transition-transform transform hover:scale-110"
+          title="Getting Started & FAQ"
+        >
+          <QuestionMarkCircleIcon className="w-8 h-8" />
+        </button>
+      </div>
+
+      {/* Help & Manual Modal */}
+      {showHelpModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-5xl relative animate-in fade-in zoom-in-95 duration-200">
+            <button
+              onClick={() => setShowHelpModal(false)}
+              className="absolute -top-4 -right-4 z-10 p-2 bg-white dark:bg-slate-800 rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors border border-gray-200 dark:border-slate-700"
+            >
+              <XMarkIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+            </button>
+            <HelpManualScreen user={null} allowedSections={['getting-started', 'faq']} />
           </div>
         </div>
       )}

@@ -6,12 +6,8 @@ import { JBO_LOGO } from './logo';
    BRAND COLORS
 ================================ */
 const COLORS = {
-  gold: [218, 165, 32],
-  goldDark: [184, 134, 11],
-  dark: [31, 41, 55],
-  muted: [107, 114, 128],
-  light: [245, 245, 235],
-  line: [220, 220, 220],
+  black: [0, 0, 0],
+  gray: [180, 180, 180],
 };
 
 /* ===============================
@@ -67,199 +63,221 @@ export const generatePurchaseOrderPDF = (order, items, supplier) => {
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 20;
-  const headerHeight = 45;
+  const margin = 15;
+  const contentWidth = pageWidth - margin * 2;
 
-  /* ---------- HEADER ---------- */
-  doc.setFillColor(...COLORS.light);
-  doc.rect(0, 0, pageWidth, headerHeight, 'F');
+  doc.setDrawColor(...COLORS.black);
+  doc.setLineWidth(0.3); // Default thin line for grids
 
+  // 2. Header Section
+  let y = margin + 10;
+  
+  // Left: Invoice/PO #
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text('Purchase Order #', margin + 5, y + 5);
+  doc.line(margin + 35, y + 5, margin + 80, y + 5);
+  doc.setFont('helvetica', 'bold');
+  doc.text(order?.id || '—', margin + 37, y + 4);
+
+  // Right: Store Info
+  const rightX = pageWidth - margin - 5;
   if (JBO_LOGO) {
-    const logoSize = 26;
-    const logoY = (headerHeight - logoSize) / 2;
-    doc.addImage(JBO_LOGO, 'PNG', margin, logoY, logoSize, logoSize);
+    const logoSize = 20;
+    doc.addImage(JBO_LOGO, 'PNG', rightX - logoSize + 4, y - 5, logoSize, logoSize);
+    y += 18;
+  } else {
+    y += 5; // Extra spacing if no logo
+  }
+  
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text(store.storeName, rightX, y, { align: 'right' });
+  
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  y += 5;
+  doc.text(store.address, rightX, y, { align: 'right' });
+  y += 4;
+  doc.text(store.email, rightX, y, { align: 'right' });
+  y += 4;
+  doc.text(store.phone, rightX, y, { align: 'right' });
+
+  // 3. Info Grid Section
+  y = margin + 45;
+  const gridHeight = 28;
+  const col1W = 22;
+  const col2W = contentWidth / 2 - col1W;
+  const col3W = 28;
+  const col4W = contentWidth / 2 - col3W;
+  
+  // Draw outer rect for grid
+  doc.rect(margin, y, contentWidth, gridHeight);
+  // Vertical split in middle
+  const midX = margin + contentWidth / 2;
+  doc.line(midX, y, midX, y + gridHeight);
+  
+  // Grid Rows
+  const rowH = gridHeight / 4;
+  for (let i = 1; i < 4; i++) {
+    const lineY = y + (rowH * i);
+    doc.line(margin, lineY, margin + contentWidth, lineY);
   }
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
-  doc.setTextColor(...COLORS.dark);
-  doc.text('INVOICE', pageWidth - margin, 20, { align: 'right' });
+  // Draw inner vertical dividers for labels
+  doc.line(margin + col1W, y, margin + col1W, y + gridHeight);
+  doc.line(midX + col3W, y, midX + col3W, y + gridHeight);
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text(`Invoice No: ${order?.id || '—'}`, pageWidth - margin, 28, { align: 'right' });
-  doc.text(
-    `Date: ${new Date(order?.order_date || new Date()).toLocaleDateString()}`,
-    pageWidth - margin,
-    34,
-    { align: 'right' }
-  );
+  // Populate Grid Texts
+  const drawRowText = (label, value, startX, startY, labelW, valueW) => {
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    // Vertically center text in row (approx)
+    const textY = startY + 5;
+    doc.text(label, startX + 2, textY);
+    // Print Value
+    const valText = doc.splitTextToSize(String(value || ''), valueW - 2)[0] || '';
+    doc.text(valText, startX + labelW + 2, textY);
+  };
 
-  doc.setDrawColor(...COLORS.gold);
-  doc.setLineWidth(0.8);
-  doc.line(margin, headerHeight + 1, pageWidth - margin, headerHeight + 1);
-
-  /* ---------- COMPANY INFO ---------- */
-  let y = headerHeight + 12;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text(store.storeName, margin, y);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(...COLORS.muted);
-  doc.text(store.address, margin, y + 6);
-  doc.text(store.phone, margin, y + 12);
-  doc.text(store.email, margin, y + 18);
-
-  /* ---------- BILL TO / SUPPLIER ---------- */
-  y += 30;
-  doc.setDrawColor(...COLORS.line);
-  doc.line(margin, y, pageWidth - margin, y);
-
-  y += 8;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.setTextColor(...COLORS.dark);
-  doc.text('BILL TO', margin, y);
-  doc.text('SUPPLIER', pageWidth / 2, y);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.text(store.storeName, margin, y + 8);
-  doc.text(store.address, margin, y + 14);
-  doc.text(store.phone, margin, y + 20);
-
-  // Supplier info with text wrapping for address
-  const supplierName = supplier?.name || '—';
-  const supplierAddress = supplier?.address || '—';
-  const supplierPhone = supplier?.phone || '—';
+  const sName = supplier?.name || '—';
+  const sPhone = supplier?.phone || '—';
+  const sEmail = supplier?.email || '—';
+  const sAddr = supplier?.address || '—';
   
-  doc.text(supplierName, pageWidth / 2, y + 8);
-  
-  // Wrap supplier address to fit within available width (pageWidth/2 to margin)
-  const addressMaxWidth = (pageWidth - margin) - (pageWidth / 2);
-  const addressLines = doc.splitTextToSize(supplierAddress, addressMaxWidth);
-  let addressY = y + 14;
-  addressLines.forEach((line) => {
-    doc.text(line, pageWidth / 2, addressY);
-    addressY += 5; // Line spacing
-  });
-  
-  doc.text(supplierPhone, pageWidth / 2, addressY);
+  drawRowText('Name:', sName, margin, y, col1W, col2W);
+  drawRowText('Phone:', sPhone, margin, y + rowH, col1W, col2W);
+  drawRowText('Email:', sEmail, margin, y + rowH * 2, col1W, col2W);
+  drawRowText('Address:', sAddr, margin, y + rowH * 3, col1W, col2W);
 
-  /* ---------- ITEMS TABLE ---------- */
+  const orderDate = order?.order_date ? new Date(order.order_date).toLocaleDateString() : new Date().toLocaleDateString();
+
+  drawRowText('Date:', orderDate, midX, y, col3W, col4W);
+  drawRowText('Order Status:', order?.status ? order.status.toUpperCase() : 'PENDING', midX, y + rowH, col3W, col4W);
+  drawRowText('Tracking Ref:', '—', midX, y + rowH * 2, col3W, col4W);
+  drawRowText('Delivery Term:', '—', midX, y + rowH * 3, col3W, col4W);
+
+  // 4. Items Table
+  y += gridHeight + 5;
+
   const safeItems = Array.isArray(items) ? items : [];
-  const tableStartY = y + 35;
+  let tableBody = safeItems.map((item) => {
+    const qty = Number(item.quantity || 0);
+    const price = Number(item.unitCost || item.unit_cost || 0);
+    return [
+      item.productName || item.name || 'Item',
+      qty.toString(),
+      formatAmount(price),
+      formatAmount(qty * price),
+    ];
+  });
 
-  const tableBody =
-    safeItems.length > 0
-      ? safeItems.map((item) => {
-          const qty = Number(item.quantity || 0);
-          const price = Number(item.unitCost || item.unit_cost || 0);
-          return [
-            item.productName || item.name || 'Item',
-            qty.toString(),
-            formatAmount(price),
-            formatAmount(qty * price),
-          ];
-        })
-      : [['No items', '-', '0.00', '0.00']];
+  // Pad with empty rows so that even with few products, table is fixed
+  const minRows = 10;
+  while (tableBody.length < minRows) {
+    tableBody.push(['', '', '', '']);
+  }
 
   doc.autoTable({
-    startY: tableStartY,
-    head: [['ITEM DESCRIPTION', 'QTY', 'UNIT PRICE', 'LINE TOTAL']],
+    startY: y,
+    head: [['Item Description', 'Quantity', 'Unit price', 'Amount']],
     body: tableBody,
-    margin: { left: margin, right: margin },
-    pageBreak: 'auto',
+    margin: { left: margin, right: margin, bottom: margin },
     theme: 'grid',
     styles: {
       font: 'helvetica',
-      fontSize: 9.5,
-      cellPadding: 6,
-      textColor: COLORS.dark,
-      lineColor: COLORS.line,
+      fontSize: 9,
+      cellPadding: 3,
+      textColor: COLORS.black,
+      lineColor: COLORS.black,
+      lineWidth: 0.3,
       valign: 'middle',
     },
     headStyles: {
-      fillColor: [245, 235, 200],
-      textColor: COLORS.dark,
+      fillColor: COLORS.gray,
+      textColor: COLORS.black,
       fontStyle: 'bold',
+      halign: 'center',
     },
     columnStyles: {
-      0: { halign: 'left', fontStyle: 'bold', fontSize: 11 },
-      1: { halign: 'center', cellWidth: 20, fontSize: 10 },
-      2: { halign: 'right', cellWidth: 30, fontSize: 10 },
-      3: { halign: 'right', cellWidth: 30, fontSize: 10 },
+      0: { halign: 'left' },
+      1: { halign: 'center', cellWidth: 25 },
+      2: { halign: 'right', cellWidth: 35 },
+      3: { halign: 'right', cellWidth: 35 },
     },
   });
 
-  /* ---------- TOTALS ---------- */
-  const subtotal = safeItems.reduce(
-    (sum, i) => sum + Number(i.quantity || 0) * Number(i.unitCost || i.unit_cost || 0),
-    0
-  );
+  // Change position of grand total to next page if there's no space on current
+  if (doc.lastAutoTable.finalY > pageHeight - margin - 45) {
+    doc.addPage();
+  }
 
+  // Fix notes and totals to the bottom of the last page
+  const totalsY = pageHeight - margin - 40;
+
+  // 5. Notes & Totals section
+  // Notes block on left
+  const notesX = margin;
+  const notesW = contentWidth * 0.45;
+  const notesH = 25;
+  
+  doc.setFillColor(...COLORS.gray);
+  doc.rect(notesX, totalsY, notesW, 6, 'FD'); // Filled and stroked header
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text('Notes', notesX + notesW/2, totalsY + 4, { align: 'center' });
+  
+  // Notes content box
+  doc.rect(notesX, totalsY + 6, notesW, notesH);
+  doc.setFont('helvetica', 'normal');
+  const noteLines = doc.splitTextToSize(order?.notes || '', notesW - 4);
+  doc.text(noteLines, notesX + 2, totalsY + 10);
+
+  // Totals block on right
+  const subtotal = safeItems.reduce((sum, i) => sum + Number(i.quantity || 0) * Number(i.unitCost || i.unit_cost || 0), 0);
   const discount = Number(order?.discount || 0);
   const taxRate = Number(order?.taxRate || 0);
   const tax = (subtotal - discount) * (taxRate / 100);
   const grandTotal = subtotal - discount + tax;
 
-  let totalsY = doc.lastAutoTable.finalY + 14;
-  if (totalsY > pageHeight - 60) {
-    doc.addPage();
-    totalsY = margin;
-  }
+  const totalsX = margin + contentWidth * 0.55;
+  let runningTotalY = totalsY + 5;
+  const totalItemH = 7;
+  const labelW = 25;
+  const totalLineW = contentWidth * 0.45 - labelW;
 
-  const tx = pageWidth - margin - 70;
+  const drawTotalLine = (label, value) => {
+    doc.setFont('helvetica', 'normal');
+    doc.text(label, totalsX, runningTotalY);
+    doc.line(totalsX + labelW, runningTotalY + 1, totalsX + labelW + totalLineW, runningTotalY + 1);
+    doc.text(value, totalsX + labelW + totalLineW - 1, runningTotalY - 0.5, { align: 'right' });
+    runningTotalY += totalItemH;
+  };
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(...COLORS.dark);
-  doc.text('Subtotal:', tx, totalsY);
-  doc.text(formatAmount(subtotal), pageWidth - margin, totalsY, { align: 'right' });
+  drawTotalLine('Subtotal:', formatAmount(subtotal));
+  drawTotalLine('Discount:', formatDiscount(discount));
+  drawTotalLine('Tax:', formatAmount(tax));
+  drawTotalLine('Grand total:', formatAmount(grandTotal));
 
-  if (discount > 0) {
-    totalsY += 7;
-    doc.text('Discount:', tx, totalsY);
-    doc.text(formatDiscount(discount), pageWidth - margin, totalsY, { align: 'right' });
-  }
-
-  if (taxRate > 0) {
-    totalsY += 7;
-    doc.text(`Tax (${taxRate}%):`, tx, totalsY);
-    doc.text(formatAmount(tax), pageWidth - margin, totalsY, { align: 'right' });
-  }
-
-  totalsY += 15;
-  doc.setDrawColor(...COLORS.gold);
-  doc.setLineWidth(0.8);
-  doc.line(tx, totalsY - 6, pageWidth - margin, totalsY - 6);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.setTextColor(...COLORS.goldDark);
-  doc.text('TOTAL:', tx, totalsY);
-  doc.text(formatAmount(grandTotal), pageWidth - margin, totalsY, { align: 'right' });
-
-  /* ---------- FOOTER ---------- */
+  /* ---------- FULL PAGE BORDERS & FOOTER ---------- */
   const pageCount = doc.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
+    
+    // Draw thick outer page border
+    doc.setDrawColor(...COLORS.black);
+    doc.setLineWidth(0.8);
+    doc.rect(margin, margin, contentWidth, pageHeight - margin * 2);
+    
+    // Default back to thin line
+    doc.setLineWidth(0.3);
+    
+    // Footer contact & pagination
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(...COLORS.muted);
-    doc.text(
-      `${store.phone} • ${store.email}`,
-      margin,
-      pageHeight - 15
-    );
-    doc.text(
-      `Page ${i} of ${pageCount}`,
-      pageWidth - margin,
-      pageHeight - 15,
-      { align: 'right' }
-    );
+    doc.setFontSize(8);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`${store.phone} • ${store.email}`, margin, pageHeight - 10);
+    doc.text(`Page ${i} of ${pageCount}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
   }
 
   return doc;
