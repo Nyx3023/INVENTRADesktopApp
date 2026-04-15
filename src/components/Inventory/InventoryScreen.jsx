@@ -95,14 +95,18 @@ const InventoryScreen = () => {
   // Single product delete confirmation
   const [productToDelete, setProductToDelete] = useState(null);
 
-  // Stock Mode - for quick barcode scanning to add quantities
+  // Stock Mode - for quick barcode scanning or product search to add quantities
   const [stockMode, setStockMode] = useState(false);
   const [stockModeQty, setStockModeQty] = useState(1);
   const [stockModeBarcode, setStockModeBarcode] = useState('');
+  const [stockModeInputMethod, setStockModeInputMethod] = useState('barcode'); // 'barcode' or 'search'
+  const [stockModeProductSearch, setStockModeProductSearch] = useState('');
+  const [stockModeShowDropdown, setStockModeShowDropdown] = useState(false);
   const [pendingStockScans, setPendingStockScans] = useState({}); // { [productId]: totalQtyScanned }
   const [isStockReviewOpen, setIsStockReviewOpen] = useState(false); // Review modal
   const [isSavingStock, setIsSavingStock] = useState(false);
   const stockModeBarcodeRef = useRef(null);
+  const stockModeSearchRef = useRef(null);
   const stockModeLastScan = useRef(null);
 
   // Handle URL parameters for barcode scanning
@@ -393,21 +397,7 @@ const InventoryScreen = () => {
 
     if (product) {
       // Product found - stage the quantity
-      const qty = Math.max(1, parseInt(stockModeQty, 10) || 1);
-
-      setPendingStockScans(prev => ({
-        ...prev,
-        [product.id]: (prev[product.id] || 0) + qty
-      }));
-
-      toast.success(
-        <div>
-          <strong>+{qty}</strong> staged for <strong>{product.name}</strong>
-          <br />
-          <span className="text-sm opacity-75">Click 'Save Scans' when done.</span>
-        </div>,
-        { duration: 2000 }
-      );
+      stageProductInStockMode(product);
     } else {
       // Product not found - open add product modal with barcode prefilled
       setPrefilledBarcode(barcode);
@@ -421,6 +411,47 @@ const InventoryScreen = () => {
     if (stockModeBarcodeRef.current) {
       stockModeBarcodeRef.current.focus();
     }
+  };
+
+  // Stock Mode: Stage a product (shared by barcode & search)
+  const stageProductInStockMode = (product) => {
+    const qty = Math.max(1, parseInt(stockModeQty, 10) || 1);
+
+    setPendingStockScans(prev => ({
+      ...prev,
+      [product.id]: (prev[product.id] || 0) + qty
+    }));
+
+    toast.success(
+      <div>
+        <strong>+{qty}</strong> staged for <strong>{product.name}</strong>
+        <br />
+        <span className="text-sm opacity-75">Click 'Save Scans' when done.</span>
+      </div>,
+      { duration: 2000 }
+    );
+  };
+
+  // Stock Mode: Handle product selection from search dropdown
+  const handleStockModeProductSelect = (product) => {
+    stageProductInStockMode(product);
+    setStockModeProductSearch('');
+    setStockModeShowDropdown(false);
+    if (stockModeSearchRef.current) {
+      stockModeSearchRef.current.focus();
+    }
+  };
+
+  // Stock Mode: Get filtered products for search
+  const getStockModeFilteredProducts = () => {
+    if (!stockModeProductSearch.trim()) return [];
+    const term = stockModeProductSearch.toLowerCase();
+    return safeProducts.filter(p =>
+      p.name.toLowerCase().includes(term) ||
+      (p.sku && p.sku.toLowerCase().includes(term)) ||
+      (p.barcode && p.barcode.toLowerCase().includes(term)) ||
+      (p.category_name && p.category_name.toLowerCase().includes(term))
+    ).slice(0, 8);
   };
 
   // Handle stock mode barcode input
@@ -445,12 +476,13 @@ const InventoryScreen = () => {
     } else {
       // Entering stock mode
       setStockMode(true);
+      setStockModeInputMethod('barcode');
       setTimeout(() => {
         if (stockModeBarcodeRef.current) {
           stockModeBarcodeRef.current.focus();
         }
       }, 100);
-      toast.success('Stock Mode enabled! Scan barcodes to stage items.', { duration: 3000, icon: '📦' });
+      toast.success('Stock Mode enabled! Scan barcodes or search products to stage items.', { duration: 3000, icon: '📦' });
     }
   };
 
@@ -476,7 +508,7 @@ const InventoryScreen = () => {
           adjustmentType: 'physical_count',
           newQuantity: newQuantity,
           reason: 'Stock Mode entry',
-          notes: `Added via barcode scanner in Stock Mode (+${qty})`,
+          notes: `Added via Stock Mode (+${qty})`,
           adjustedBy: user?.name,
           adjustedById: user?.id
         });
@@ -1739,318 +1771,306 @@ const InventoryScreen = () => {
         </ModalPortal>
       )}
 
-      {/* Stock Mode Floating Panel */}
+      {/* Stock Mode Modal */}
       {stockMode && (
-        <div className="fixed bottom-6 right-6 z-50">
-          <div className={`${colors.card.primary} rounded-2xl shadow-2xl border-2 border-green-500 p-4 w-80`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
-                  <QrCodeIcon className="h-5 w-5 text-green-600 dark:text-green-400" />
+        <ModalPortal>
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+          onClick={() => {}} // Don't close on backdrop click
+        >
+          <div
+            className={`${colors.card.primary} rounded-2xl shadow-2xl border-2 border-green-500 w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className={`px-5 py-3 border-b ${colors.border.primary} flex items-center justify-between flex-shrink-0 bg-gradient-to-r from-green-600 to-emerald-600`}>
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white/20 rounded-xl">
+                  <QrCodeIcon className="h-5 w-5 text-white" />
                 </div>
                 <div>
-                  <h3 className={`font-semibold ${colors.text.primary}`}>Stock Mode</h3>
-                  <p className={`text-xs ${colors.text.secondary}`}>Scan barcode to add stock</p>
+                  <h3 className="text-base font-bold text-white">Stock Mode</h3>
+                  <p className="text-xs text-green-100">
+                    {Object.keys(pendingStockScans).length > 0
+                      ? `${Object.keys(pendingStockScans).length} product(s) · ${Object.values(pendingStockScans).reduce((a, b) => a + b, 0)} total items staged`
+                      : 'Scan barcodes or search products to stage stock'}
+                  </p>
                 </div>
               </div>
               <button
                 onClick={toggleStockMode}
-                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+                className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                title="Exit Stock Mode"
               >
-                <XMarkIcon className={`h-5 w-5 ${colors.text.secondary}`} />
+                <XMarkIcon className="h-5 w-5 text-white" />
               </button>
             </div>
 
-            <div className="space-y-3">
-              {/* Quantity per scan */}
-              <div>
-                <label className={`block text-sm font-medium mb-1 ${colors.text.secondary}`}>
-                  Quantity per scan
-                </label>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setStockModeQty(Math.max(1, stockModeQty - 1))}
-                    className={`p-2 rounded-lg ${colors.bg.secondary} hover:${colors.bg.tertiary}`}
-                  >
-                    <MinusIcon className="h-4 w-4" />
-                  </button>
-                  <input
-                    type="number"
-                    value={stockModeQty}
-                    onChange={(e) => setStockModeQty(Math.max(1, parseInt(e.target.value) || 1))}
-                    className={`w-20 text-center border rounded-lg px-3 py-2 ${colors.input.primary}`}
-                    min="1"
-                  />
-                  <button
-                    onClick={() => setStockModeQty(stockModeQty + 1)}
-                    className={`p-2 rounded-lg ${colors.bg.secondary} hover:${colors.bg.tertiary}`}
-                  >
-                    <ArrowUpIcon className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Barcode input */}
-              <div>
-                <label className={`block text-sm font-medium mb-1 ${colors.text.secondary}`}>
-                  Scan or enter barcode
-                </label>
-                <input
-                  ref={stockModeBarcodeRef}
-                  type="text"
-                  value={stockModeBarcode}
-                  onChange={(e) => setStockModeBarcode(e.target.value)}
-                  onKeyDown={handleStockModeBarcodeKeyDown}
-                  placeholder="Scan barcode here..."
-                  className={`w-full border rounded-lg px-3 py-2 ${colors.input.primary} focus:ring-2 focus:ring-green-500`}
-                  autoFocus
-                />
-              </div>
-
-              <div className={`text-xs ${colors.text.tertiary} text-center`}>
-                Press Enter after scanning to add stock
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Single Product Delete Confirmation Modal ── */}
-      {productToDelete && (
-        <ModalPortal>
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className={`${colors.card.primary} rounded-2xl shadow-2xl max-w-md w-full overflow-hidden`}>
-            {/* Header */}
-            <div className="flex items-center gap-4 p-6 border-b border-red-100 dark:border-red-900/30">
-              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-                <TrashIcon className="h-6 w-6 text-red-600 dark:text-red-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Delete Product</h3>
-                <p className={`text-sm ${colors.text.secondary}`}>This action cannot be undone</p>
-              </div>
-              <button
-                onClick={() => setProductToDelete(null)}
-                className={`p-2 rounded-lg ${colors.text.tertiary} hover:${colors.text.secondary} hover:${colors.bg.secondary} transition-colors`}
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Product details */}
-            <div className="p-6">
-              <div className={`${colors.bg.secondary} rounded-xl p-4 mb-5`}>
-                <p className={`text-xs font-medium ${colors.text.secondary} uppercase tracking-wider mb-1`}>Product</p>
-                <p className={`font-semibold ${colors.text.primary} text-base truncate`}>{productToDelete.name}</p>
-                {productToDelete.category_name && (
-                  <p className={`text-sm ${colors.text.secondary} mt-0.5`}>{productToDelete.category_name}</p>
-                )}
-              </div>
-
-              {/* Warning */}
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 mb-6">
-                <div className="flex gap-3">
-                  <ExclamationTriangleIcon className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+            {/* Modal Body - Split Layout */}
+            <div className="flex-1 flex overflow-hidden min-h-0">
+              {/* Left Panel - Input Controls */}
+              <div className={`w-[280px] flex-shrink-0 border-r ${colors.border.primary} flex flex-col ${colors.bg.secondary}`}>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {/* Quantity per entry */}
                   <div>
-                    <p className="text-sm font-medium text-red-800 dark:text-red-300">Warning</p>
-                    <ul className="text-sm text-red-700 dark:text-red-400 mt-1 space-y-1 list-disc pl-4">
-                      <li>Product will be permanently removed</li>
-                      <li>All associated data will be deleted</li>
-                      <li>This action cannot be reversed</li>
-                    </ul>
+                    <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
+                      Quantity per entry
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setStockModeQty(Math.max(1, stockModeQty - 1))}
+                        className={`flex-shrink-0 p-2 rounded-lg ${colors.card.primary} border ${colors.border.primary} hover:border-green-400 transition-colors`}
+                      >
+                        <MinusIcon className="h-4 w-4" />
+                      </button>
+                      <input
+                        type="number"
+                        value={stockModeQty}
+                        onChange={(e) => setStockModeQty(Math.max(1, parseInt(e.target.value) || 1))}
+                        className={`min-w-0 flex-1 text-center border-2 rounded-lg px-2 py-2.5 text-sm font-bold ${colors.input.primary} focus:border-green-500 focus:ring-2 focus:ring-green-200`}
+                        min="1"
+                      />
+                      <button
+                        onClick={() => setStockModeQty(stockModeQty + 1)}
+                        className={`flex-shrink-0 p-2 rounded-lg ${colors.card.primary} border ${colors.border.primary} hover:border-green-400 transition-colors`}
+                      >
+                        <ArrowUpIcon className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              {/* Action buttons */}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setProductToDelete(null)}
-                  className={`flex-1 px-4 py-2.5 border ${colors.border.primary} rounded-xl text-sm font-medium ${colors.text.secondary} hover:${colors.bg.secondary} transition-all duration-200`}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={confirmDeleteProduct}
-                  className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-medium transition-all duration-200 shadow-lg shadow-red-600/20 flex items-center justify-center gap-2"
-                >
-                  <TrashIcon className="h-4 w-4" />
-                  Delete Product
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-        </ModalPortal>
-      )}
-
-      {/* ── Bulk Delete Confirmation Modal ── */}
-      {showBulkDeleteModal && (
-        <ModalPortal>
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className={`${colors.card.primary} rounded-2xl shadow-2xl max-w-md w-full overflow-hidden`}>
-            {/* Header */}
-            <div className="flex items-center gap-4 p-6 border-b border-red-100 dark:border-red-900/30">
-              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-                <TrashIcon className="h-6 w-6 text-red-600 dark:text-red-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Delete Products</h3>
-                <p className={`text-sm ${colors.text.secondary}`}>This action cannot be undone</p>
-              </div>
-              <button
-                onClick={() => setShowBulkDeleteModal(false)}
-                className={`p-2 rounded-lg ${colors.text.tertiary} hover:${colors.text.secondary} hover:${colors.bg.secondary} transition-colors`}
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Count details */}
-            <div className="p-6">
-              <div className={`${colors.bg.secondary} rounded-xl p-4 mb-5`}>
-                <p className={`text-xs font-medium ${colors.text.secondary} uppercase tracking-wider mb-1`}>Selected</p>
-                <p className={`font-semibold ${colors.text.primary} text-base`}>
-                  {selectedProducts.length} product{selectedProducts.length !== 1 ? 's' : ''} selected for deletion
-                </p>
-              </div>
-
-              {/* Warning */}
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 mb-6">
-                <div className="flex gap-3">
-                  <ExclamationTriangleIcon className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                  {/* Input Method Tabs */}
                   <div>
-                    <p className="text-sm font-medium text-red-800 dark:text-red-300">Warning</p>
-                    <ul className="text-sm text-red-700 dark:text-red-400 mt-1 space-y-1 list-disc pl-4">
-                      <li>All selected products will be permanently removed</li>
-                      <li>All associated data will be deleted</li>
-                      <li>This action cannot be reversed</li>
-                    </ul>
+                    <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
+                      Input method
+                    </label>
+                    <div className="flex rounded-xl overflow-hidden border-2 border-green-400 dark:border-green-600">
+                      <button
+                        onClick={() => {
+                          setStockModeInputMethod('barcode');
+                          setTimeout(() => stockModeBarcodeRef.current?.focus(), 50);
+                        }}
+                        className={`flex-1 px-3 py-2 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                          stockModeInputMethod === 'barcode'
+                            ? 'bg-green-600 text-white'
+                            : `${colors.card.primary} ${colors.text.secondary} hover:bg-green-50 dark:hover:bg-green-900/20`
+                        }`}
+                      >
+                        <QrCodeIcon className="h-4 w-4" />
+                        Barcode
+                      </button>
+                      <button
+                        onClick={() => {
+                          setStockModeInputMethod('search');
+                          setTimeout(() => stockModeSearchRef.current?.focus(), 50);
+                        }}
+                        className={`flex-1 px-3 py-2 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                          stockModeInputMethod === 'search'
+                            ? 'bg-green-600 text-white'
+                            : `${colors.card.primary} ${colors.text.secondary} hover:bg-green-50 dark:hover:bg-green-900/20`
+                        }`}
+                      >
+                        <MagnifyingGlassIcon className="h-4 w-4" />
+                        Search
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              {/* Action buttons */}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowBulkDeleteModal(false)}
-                  className={`flex-1 px-4 py-2.5 border ${colors.border.primary} rounded-xl text-sm font-medium ${colors.text.secondary} hover:${colors.bg.secondary} transition-all duration-200`}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleBulkDelete}
-                  className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-medium transition-all duration-200 shadow-lg shadow-red-600/20 flex items-center justify-center gap-2"
-                >
-                  <TrashIcon className="h-4 w-4" />
-                  Delete {selectedProducts.length} Product{selectedProducts.length !== 1 ? 's' : ''}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-        </ModalPortal>
-      )}
-      {/* Stock Mode Review Modal */}
-      {isStockReviewOpen && (
-        <ModalPortal>
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
-          onClick={() => {}} // Don't close on backdrop click
-        >
-          <div
-            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className={`flex items-center justify-between px-6 py-4 border-b ${colors.border.primary}`}>
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-green-100 dark:bg-green-900/20 rounded-lg">
-                  <QrCodeIcon className="h-6 w-6 text-green-600 dark:text-green-400" />
-                </div>
-                <div>
-                  <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Review Scanned Items</h3>
-                  <p className={`text-sm ${colors.text.secondary}`}>
-                    {Object.keys(pendingStockScans).length} product(s) · {Object.values(pendingStockScans).reduce((a, b) => a + b, 0)} total items
-                  </p>
-                </div>
-              </div>
-            </div>
+                  {/* Barcode input */}
+                  {stockModeInputMethod === 'barcode' && (
+                    <div>
+                      <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
+                        Scan or type barcode
+                      </label>
+                      <input
+                        ref={stockModeBarcodeRef}
+                        type="text"
+                        value={stockModeBarcode}
+                        onChange={(e) => setStockModeBarcode(e.target.value)}
+                        onKeyDown={handleStockModeBarcodeKeyDown}
+                        placeholder="Scan barcode here..."
+                        className={`w-full border-2 rounded-lg px-3 py-2.5 text-sm ${colors.input.primary} focus:ring-2 focus:ring-green-400 focus:border-green-500`}
+                        autoFocus
+                      />
+                      <p className={`text-xs ${colors.text.tertiary} text-center mt-2`}>
+                        Press <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs font-mono">Enter</kbd> after scanning
+                      </p>
+                    </div>
+                  )}
 
-            {/* Modal Body - Scrollable */}
-            <div className="flex-1 overflow-y-auto px-6 py-4">
-              <div className="space-y-3">
-                {Object.entries(pendingStockScans).map(([productId, qty]) => {
-                  const product = safeProducts.find(p => p.id === productId);
-                  if (!product) return null;
-                  const currentQty = Number(product.quantity) || 0;
-                  const newQty = currentQty + qty;
-
-                  return (
-                    <div
-                      key={productId}
-                      className={`p-4 rounded-xl border ${colors.border.primary} ${colors.bg.secondary} flex items-center gap-4`}
-                    >
-                      {/* Product Info */}
-                      <div className="flex-1 min-w-0">
-                        <p className={`font-medium ${colors.text.primary} truncate`}>{product.name}</p>
-                        <p className={`text-xs ${colors.text.secondary} mt-0.5`}>
-                          {product.barcode || 'No barcode'} · {product.category_name || 'Uncategorized'}
-                        </p>
-                      </div>
-
-                      {/* Current → New Stock */}
-                      <div className="flex items-center gap-2 text-sm flex-shrink-0">
-                        <span className={`${colors.text.secondary}`}>{currentQty}</span>
-                        <ChevronRightIcon className="h-4 w-4 text-gray-400" />
-                        <span className="font-bold text-green-600 dark:text-green-400">{newQty}</span>
-                      </div>
-
-                      {/* Editable Qty */}
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <span className={`text-xs ${colors.text.secondary}`}>+</span>
+                  {/* Product Search input */}
+                  {stockModeInputMethod === 'search' && (
+                    <div className="relative">
+                      <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
+                        Search by name
+                      </label>
+                      <div className="relative">
+                        <MagnifyingGlassIcon className={`h-5 w-5 absolute left-3 top-1/2 -translate-y-1/2 ${colors.text.tertiary}`} />
                         <input
-                          type="number"
-                          min="1"
-                          value={qty}
-                          onChange={(e) => updatePendingScanQty(productId, e.target.value)}
-                          className={`w-16 p-1.5 text-center rounded-lg border ${colors.input.primary} text-sm font-semibold`}
+                          ref={stockModeSearchRef}
+                          type="text"
+                          value={stockModeProductSearch}
+                          onChange={(e) => {
+                            setStockModeProductSearch(e.target.value);
+                            setStockModeShowDropdown(true);
+                          }}
+                          onFocus={() => setStockModeShowDropdown(true)}
+                          placeholder="Type product name..."
+                          className={`w-full border-2 rounded-lg pl-9 pr-3 py-2.5 text-sm ${colors.input.primary} focus:ring-2 focus:ring-green-400 focus:border-green-500`}
+                          autoFocus
                         />
                       </div>
 
-                      {/* Remove Button */}
-                      <button
-                        onClick={() => removePendingScan(productId)}
-                        className="p-1.5 rounded-lg text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors flex-shrink-0"
-                        title="Remove this item"
-                      >
-                        <XMarkIcon className="h-4 w-4" />
-                      </button>
-                    </div>
-                  );
-                })}
+                      {/* Product search dropdown */}
+                      {stockModeShowDropdown && stockModeProductSearch.trim() && (
+                        <div className={`absolute z-[60] w-full mt-1 max-h-60 overflow-y-auto ${colors.card.primary} border-2 ${colors.border.primary} rounded-xl shadow-2xl`}>
+                          {(() => {
+                            const results = getStockModeFilteredProducts();
+                            if (results.length === 0) {
+                              return (
+                                <div className={`px-4 py-4 text-sm ${colors.text.secondary} text-center italic`}>
+                                  No products found for "{stockModeProductSearch}"
+                                </div>
+                              );
+                            }
+                            return results.map(product => (
+                              <button
+                                key={product.id}
+                                type="button"
+                                className={`w-full text-left px-4 py-3 cursor-pointer hover:bg-green-50 dark:hover:bg-green-900/20 ${colors.text.primary} border-b ${colors.border.primary} last:border-b-0 transition-colors`}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  handleStockModeProductSelect(product);
+                                }}
+                              >
+                                <div className="font-medium text-sm truncate">{product.name}</div>
+                                <div className={`text-xs ${colors.text.secondary} mt-1 flex items-center gap-2 flex-wrap`}>
+                                  {product.barcode && <span className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-[10px]">📦 {product.barcode}</span>}
+                                  {!product.barcode && <span className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded text-[10px]">No barcode</span>}
+                                  <span>Stock: <strong>{product.quantity || 0}</strong></span>
+                                  {product.category_name && <span>· {product.category_name}</span>}
+                                </div>
+                              </button>
+                            ));
+                          })()}
+                        </div>
+                      )}
 
-                {Object.keys(pendingStockScans).length === 0 && (
-                  <div className="text-center py-8">
-                    <p className={`${colors.text.secondary}`}>All items removed. Modal will close.</p>
+                      <p className={`text-xs ${colors.text.tertiary} text-center mt-2`}>
+                        Click a product to stage it
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Panel - Staged Products List */}
+              <div className="flex-1 flex flex-col min-w-0">
+                {/* Staged Products Header */}
+                <div className={`px-5 py-2.5 border-b ${colors.border.primary} flex items-center justify-between flex-shrink-0`}>
+                  <div className="flex items-center gap-2">
+                    <h4 className={`text-sm font-bold uppercase tracking-wider ${colors.text.secondary}`}>Staged Products</h4>
+                    {Object.keys(pendingStockScans).length > 0 && (
+                      <span className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-bold px-2 py-0.5 rounded-full">
+                        {Object.keys(pendingStockScans).length}
+                      </span>
+                    )}
                   </div>
-                )}
+                  {Object.keys(pendingStockScans).length > 0 && (
+                    <div className={`text-xs ${colors.text.secondary}`}>
+                      Total: <strong className="text-green-600 dark:text-green-400">+{Object.values(pendingStockScans).reduce((a, b) => a + b, 0)}</strong> items
+                    </div>
+                  )}
+                </div>
+
+                {/* Staged Products Scrollable List */}
+                <div className="flex-1 overflow-y-auto px-5 py-3">
+                  {Object.keys(pendingStockScans).length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center py-12">
+                      <div className={`p-4 rounded-2xl ${colors.bg.secondary} mb-4`}>
+                        <CubeIcon className={`h-12 w-12 ${colors.text.tertiary}`} />
+                      </div>
+                      <h4 className={`text-base font-semibold ${colors.text.primary} mb-1`}>No products staged yet</h4>
+                      <p className={`text-sm ${colors.text.secondary} max-w-xs`}>
+                        {stockModeInputMethod === 'barcode'
+                          ? 'Scan a barcode or switch to Product Search to start adding stock'
+                          : 'Search for a product and click it to stage stock'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {Object.entries(pendingStockScans).map(([productId, qty]) => {
+                        const product = safeProducts.find(p => p.id === productId);
+                        if (!product) return null;
+                        const currentQty = Number(product.quantity) || 0;
+                        const newQty = currentQty + qty;
+
+                        return (
+                          <div
+                            key={productId}
+                            className={`p-3.5 rounded-xl border ${colors.border.primary} ${colors.bg.secondary} flex items-center gap-3 hover:border-green-300 dark:hover:border-green-700 transition-colors`}
+                          >
+                            {/* Product Info */}
+                            <div className="flex-1 min-w-0">
+                              <p className={`font-medium ${colors.text.primary} truncate text-sm`}>{product.name}</p>
+                              <p className={`text-xs ${colors.text.secondary} mt-0.5 flex items-center gap-1.5`}>
+                                {product.barcode
+                                  ? <span className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-[10px]">📦 {product.barcode}</span>
+                                  : <span className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded text-[10px]">No barcode</span>
+                                }
+                                <span>· {product.category_name || 'Uncategorized'}</span>
+                              </p>
+                            </div>
+
+                            {/* Current → New Stock */}
+                            <div className="flex items-center gap-1.5 text-sm flex-shrink-0">
+                              <span className={`${colors.text.secondary} tabular-nums`}>{currentQty}</span>
+                              <ChevronRightIcon className="h-3.5 w-3.5 text-gray-400" />
+                              <span className="font-bold text-green-600 dark:text-green-400 tabular-nums">{newQty}</span>
+                            </div>
+
+                            {/* Editable Qty */}
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <span className={`text-xs font-bold text-green-600 dark:text-green-400`}>+</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={qty}
+                                onChange={(e) => updatePendingScanQty(productId, e.target.value)}
+                                className={`w-16 p-1.5 text-center rounded-lg border-2 ${colors.input.primary} text-sm font-bold focus:border-green-500 focus:ring-1 focus:ring-green-200`}
+                              />
+                            </div>
+
+                            {/* Remove Button */}
+                            <button
+                              onClick={() => removePendingScan(productId)}
+                              className="p-1.5 rounded-lg text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors flex-shrink-0"
+                              title="Remove this item"
+                            >
+                              <XMarkIcon className="h-4 w-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
             {/* Modal Footer */}
-            <div className={`px-6 py-4 border-t ${colors.border.primary} flex items-center justify-between gap-3`}>
+            <div className={`px-5 py-3 border-t-2 ${colors.border.primary} flex items-center justify-between gap-3 flex-shrink-0 ${colors.bg.secondary}`}>
               <button
                 onClick={discardStockModeScans}
                 disabled={isSavingStock}
-                className={`px-4 py-2.5 border ${colors.border.primary} rounded-xl text-sm font-medium ${colors.text.secondary} hover:${colors.bg.secondary} transition-all duration-200 disabled:opacity-50`}
+                className={`px-5 py-2.5 border ${colors.border.primary} rounded-xl text-sm font-medium ${colors.text.secondary} hover:${colors.bg.tertiary} transition-all duration-200 disabled:opacity-50`}
               >
-                Discard All
+                Discard & Exit
               </button>
               <button
                 onClick={saveStockModeScans}
                 disabled={isSavingStock || Object.keys(pendingStockScans).length === 0}
-                className="px-6 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-semibold transition-all duration-200 shadow-lg shadow-green-600/20 flex items-center gap-2 disabled:opacity-50"
+                className="px-8 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-bold transition-all duration-200 shadow-lg shadow-green-600/20 flex items-center gap-2 disabled:opacity-50 disabled:shadow-none"
               >
                 {isSavingStock ? (
                   <>
@@ -2060,7 +2080,7 @@ const InventoryScreen = () => {
                 ) : (
                   <>
                     <CheckCircleIcon className="h-5 w-5" />
-                    Save All ({Object.values(pendingStockScans).reduce((a, b) => a + b, 0)} items)
+                    Save All {Object.keys(pendingStockScans).length > 0 ? `(${Object.values(pendingStockScans).reduce((a, b) => a + b, 0)} items)` : ''}
                   </>
                 )}
               </button>

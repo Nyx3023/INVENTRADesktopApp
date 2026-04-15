@@ -1066,14 +1066,14 @@ const HelpManualScreen = ({ user, allowedSections = null }) => {
       <div className={`shrink-0 flex items-center gap-3 px-5 py-3.5 border-b ${colors.border.primary} bg-gradient-to-r from-amber-500 to-amber-600 dark:from-teal-600 dark:to-teal-700`}>
         <BookOpenIcon className="h-5 w-5 text-teal-100 shrink-0" />
         <span className="text-white font-semibold text-base">Help & Manual</span>
-        <div className="ml-auto flex items-center gap-2 bg-white/15 border border-white/25 rounded-lg px-3 py-1.5 w-64">
+        <div className="ml-auto flex items-center gap-2 bg-white/15 rounded-lg px-3 py-1.5 w-64">
           <MagnifyingGlassIcon className="h-4 w-4 text-white/70 shrink-0" />
           <input
             type="text"
             placeholder="Search manual..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="bg-transparent text-white placeholder-white/60 text-sm outline-none w-full"
+            className="bg-transparent text-white placeholder-white/60 text-sm outline-none border-none w-full"
           />
         </div>
       </div>
