@@ -43,8 +43,7 @@ const PurchaseOrdersScreen = () => {
   const [orderToCancel, setOrderToCancel] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [productSearchTerms, setProductSearchTerms] = useState({});
-  const [showProductDropdown, setShowProductDropdown] = useState({});
+  const [productSearch, setProductSearch] = useState('');
 
   // Date filtering and sorting states
   const [dateFilter, setDateFilter] = useState({
@@ -169,52 +168,45 @@ const PurchaseOrdersScreen = () => {
     setFilteredOrders(filtered);
   };
 
-  const addItem = () => {
-    const newIdx = draft.items.length;
-    setDraft(prev => ({ ...prev, items: [...prev.items, { productId: '', productName: '', quantity: 1, unitCost: 0 }] }));
-    setProductSearchTerms(prev => ({ ...prev, [newIdx]: '' }));
+  // Add product to cart or increment qty if already in cart
+  const addProductToCart = (product) => {
+    const existingIdx = draft.items.findIndex(it => it.productId === product.id);
+    if (existingIdx >= 0) {
+      // Already in cart — increment qty
+      setDraft(prev => ({
+        ...prev,
+        items: prev.items.map((it, i) =>
+          i === existingIdx ? { ...it, quantity: Number(it.quantity) + 1 } : it
+        )
+      }));
+    } else {
+      // New item
+      const suggestedCost = product.price && product.price > 0 ? product.price : 0;
+      setDraft(prev => ({
+        ...prev,
+        items: [
+          ...prev.items,
+          { productId: product.id, productName: product.name, quantity: 1, unitCost: suggestedCost }
+        ]
+      }));
+    }
   };
 
   const updateItem = (idx, patch) => setDraft(prev => ({ ...prev, items: prev.items.map((it, i) => i === idx ? { ...it, ...patch } : it) }));
 
   const removeItem = (idx) => {
     setDraft(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== idx) }));
-    setProductSearchTerms(prev => {
-      const newTerms = { ...prev };
-      delete newTerms[idx];
-      return newTerms;
-    });
-    setShowProductDropdown(prev => {
-      const newDropdown = { ...prev };
-      delete newDropdown[idx];
-      return newDropdown;
-    });
   };
 
-  const getFilteredProducts = (idx) => {
-    const searchTerm = productSearchTerms[idx] || '';
-    if (!searchTerm) return products;
-    return products.filter(p =>
-      p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (p.barcode && p.barcode.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (p.sku && p.sku.toLowerCase().includes(searchTerm.toLowerCase()))
+  const filteredCatalogProducts = products.filter(p => {
+    if (!productSearch) return true;
+    const q = productSearch.toLowerCase();
+    return (
+      p.name.toLowerCase().includes(q) ||
+      (p.barcode && p.barcode.toLowerCase().includes(q)) ||
+      (p.sku && p.sku.toLowerCase().includes(q))
     );
-  };
-
-  const selectProduct = (idx, product) => {
-    // Use the actual selling price
-    const suggestedCost = product.price && product.price > 0
-      ? product.price
-      : 0;
-
-    updateItem(idx, {
-      productId: product.id,
-      productName: product.name,
-      unitCost: suggestedCost
-    });
-    setProductSearchTerms(prev => ({ ...prev, [idx]: product.name }));
-    setShowProductDropdown(prev => ({ ...prev, [idx]: false }));
-  };
+  });
 
   const draftTotal = useMemo(() => draft.items.reduce((sum, it) => sum + (Number(it.quantity) * Number(it.unitCost || 0)), 0), [draft.items]);
 
@@ -278,7 +270,7 @@ const PurchaseOrdersScreen = () => {
               }
               toast.success('Opening supplier messenger...');
             } else {
-               toast.error('No valid messenger URL found for this supplier');
+              toast.error('No valid messenger URL found for this supplier');
             }
           }
         } catch (pdfError) {
@@ -288,8 +280,7 @@ const PurchaseOrdersScreen = () => {
       }
 
       setDraft({ supplierId: '', items: [], notes: '' });
-      setProductSearchTerms({});
-      setShowProductDropdown({});
+      setProductSearch('');
       setShowPreviewModal(false);
       setShowCreateModal(false);
       await load();
@@ -752,476 +743,502 @@ const PurchaseOrdersScreen = () => {
         </div>
       )}
 
-      {/* Create Purchase Order Modal - REDESIGNED */}
+      {/* Create Purchase Order Modal - 2-PANEL REDESIGN */}
       {showCreateModal && (
         <ModalPortal>
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => {
-          setShowCreateModal(false);
-          setDraft({ supplierId: '', items: [], notes: '' });
-          setProductSearchTerms({});
-          setShowProductDropdown({});
-        }}>
-          <div
-            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-6xl h-[90vh] flex flex-col`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* FIXED HEADER */}
-            <div className={`px-6 py-4 border-b ${colors.border.primary} flex-shrink-0`}>
-              <div className="flex items-center justify-between">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => {
+            setShowCreateModal(false);
+            setDraft({ supplierId: '', items: [], notes: '' });
+            setProductSearch('');
+          }}>
+            <div
+              className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-7xl h-[92vh] flex flex-col`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* MODAL HEADER */}
+              <div className={`px-6 py-4 border-b ${colors.border.primary} flex-shrink-0 flex items-center justify-between`}>
                 <div>
                   <h3 className={`text-xl font-bold ${colors.text.primary}`}>Create Purchase Order</h3>
-                  <p className={`text-sm ${colors.text.secondary} mt-1`}>Add products quickly and finalize your order</p>
+                  <p className={`text-sm ${colors.text.secondary} mt-0.5`}>Browse products on the right, manage your order on the left</p>
                 </div>
                 <button
                   onClick={() => {
                     setDraft({ supplierId: '', items: [], notes: '' });
+                    setProductSearch('');
                     setShowCreateModal(false);
-                    setProductSearchTerms({});
-                    setShowProductDropdown({});
                   }}
-                  className={`p-2 rounded-lg hover:${colors.bg.secondary} transition-colors`}
+                  className={`p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors`}
                 >
-                  <XMarkIcon className={`h-6 w-6 ${colors.text.secondary}`} />
+                  <XMarkIcon className="h-6 w-6" />
                 </button>
               </div>
-            </div>
 
-            {/* FIXED TOP SECTION - Supplier & Add Button */}
-            <div className={`px-6 py-4 border-b ${colors.border.primary} flex-shrink-0 ${colors.bg.secondary}`}>
-              <div className="flex items-end gap-4">
-                <div className="flex-1">
-                  <label className={`block text-sm font-medium ${colors.text.secondary} mb-2`}>
-                    Supplier <span className="text-xs opacity-75">(Optional)</span>
-                  </label>
-                  <select
-                    className={`w-full border rounded-lg px-4 py-3 ${colors.input.primary} text-base`}
-                    value={draft.supplierId}
-                    onChange={(e) => setDraft({ ...draft, supplierId: e.target.value })}
-                  >
-                    <option value="">Select supplier...</option>
-                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-                <button
-                  onClick={addItem}
-                  className="btn-primary px-6 py-3 inline-flex items-center gap-2 text-base font-semibold"
-                >
-                  <PlusIcon className="h-6 w-6" /> Add Product
-                </button>
-              </div>
-            </div>
+              {/* TWO-PANEL BODY */}
+              <div className="flex flex-1 min-h-0">
 
-            {/* SCROLLABLE ITEMS LIST */}
-            <div className="flex-1 overflow-y-auto px-6 py-4">
-              {draft.items.length === 0 ? (
-                <div className={`${colors.bg.secondary} rounded-xl p-12 text-center border-2 border-dashed ${colors.border.primary}`}>
-                  <CubeIcon className={`h-16 w-16 mx-auto mb-4 ${colors.text.tertiary}`} />
-                  <h3 className={`text-lg font-semibold mb-2 ${colors.text.primary}`}>No items added yet</h3>
-                  <p className={`${colors.text.secondary}`}>Click "Add Product" button above to start</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {draft.items.map((it, idx) => {
-                    const subtotal = Number(it.quantity) * Number(it.unitCost || 0);
-                    const filteredProducts = getFilteredProducts(idx);
-                    return (
-                      <div key={idx} className={`${colors.card.primary} border-2 ${colors.border.primary} rounded-xl p-4 hover:border-blue-400 transition-all`}>
-                        <div className="flex items-start gap-3">
-                          {/* Item Number Badge */}
-                          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm">
-                            {idx + 1}
-                          </div>
+                {/* ===== LEFT PANEL: Order Configuration ===== */}
+                <div className={`w-[42%] flex flex-col border-r ${colors.border.primary}`}>
 
-                          {/* Product Search - Flex grow */}
-                          <div className="flex-1 relative">
-                            <label className={`block text-xs font-medium ${colors.text.secondary} mb-1.5`}>Product Name</label>
-                            <input
-                              type="text"
-                              className={`w-full border-2 rounded-lg px-4 py-2.5 text-base ${colors.input.primary} focus:border-blue-500 focus:ring-2 focus:ring-blue-200`}
-                              placeholder="Type to search products..."
-                              value={productSearchTerms[idx] || ''}
-                              onChange={(e) => {
-                                setProductSearchTerms(prev => ({ ...prev, [idx]: e.target.value }));
-                                setShowProductDropdown(prev => ({ ...prev, [idx]: true }));
-                              }}
-                              onFocus={() => setShowProductDropdown(prev => ({ ...prev, [idx]: true }))}
-                              onBlur={() => {
-                                setTimeout(() => {
-                                  setShowProductDropdown(prev => ({ ...prev, [idx]: false }));
-                                }, 200);
-                              }}
-                            />
-                            {showProductDropdown[idx] && filteredProducts.length > 0 && (
-                              <div className={`absolute z-50 w-full mt-2 max-h-64 overflow-y-auto ${colors.card.primary} border-2 ${colors.border.primary} rounded-xl shadow-2xl`}>
-                                {filteredProducts.slice(0, 10).map(product => (
-                                  <div
-                                    key={product.id}
-                                    className={`px-4 py-3 cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 ${colors.text.primary} border-b ${colors.border.primary} last:border-b-0 transition-colors`}
-                                    onClick={() => selectProduct(idx, product)}
-                                  >
-                                    <div className="font-semibold text-base">{product.name}</div>
-                                    <div className={`text-xs ${colors.text.secondary} mt-1.5 flex items-center gap-3`}>
-                                      {product.barcode && <span className="bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">📦 {product.barcode}</span>}
-                                      <span>Stock: <strong>{product.quantity || 0}</strong></span>
-                                      <span>Price: <strong>{formatCurrency(parseFloat(product.price || 0))}</strong></span>
-                                    </div>
-                                  </div>
-                                ))}
+                  {/* Supplier selector */}
+                  <div className={`px-5 py-4 border-b ${colors.border.primary} flex-shrink-0`}>
+                    <label className={`block text-xs font-semibold uppercase tracking-wider ${colors.text.secondary} mb-2`}>
+                      Supplier <span className="font-normal opacity-70">(Optional)</span>
+                    </label>
+                    <select
+                      className={`w-full border rounded-xl px-4 py-2.5 ${colors.input.primary} text-sm`}
+                      value={draft.supplierId}
+                      onChange={(e) => setDraft({ ...draft, supplierId: e.target.value })}
+                    >
+                      <option value="">Select supplier...</option>
+                      {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+
+                  {/* Cart Items — scrollable */}
+                  <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
+                    {draft.items.length === 0 ? (
+                      <div className={`rounded-xl p-10 text-center border-2 border-dashed ${colors.border.primary} mt-4`}>
+                        <CubeIcon className={`h-12 w-12 mx-auto mb-3 ${colors.text.tertiary}`} />
+                        <p className={`text-sm font-semibold ${colors.text.primary} mb-1`}>Cart is empty</p>
+                        <p className={`text-xs ${colors.text.secondary}`}>Select products from the right panel</p>
+                      </div>
+                    ) : (
+                      draft.items.map((it, idx) => {
+                        const subtotal = Number(it.quantity) * Number(it.unitCost || 0);
+                        return (
+                          <div
+                            key={idx}
+                            className={`${colors.card.primary} border ${colors.border.primary} rounded-xl p-3 hover:border-blue-400 dark:hover:border-blue-500 transition-all group`}
+                          >
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs">
+                                {idx + 1}
+                              </span>
+                              <p className={`flex-1 text-sm font-semibold ${colors.text.primary} truncate`} title={it.productName}>
+                                {it.productName || <span className={`italic ${colors.text.tertiary}`}>Unknown</span>}
+                              </p>
+                              <button
+                                onClick={() => removeItem(idx)}
+                                className="opacity-0 group-hover:opacity-100 p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
+                                title="Remove"
+                              >
+                                <TrashIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1">
+                                <label className={`block text-[10px] font-medium ${colors.text.secondary} mb-1`}>Qty</label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  className={`w-full border rounded-lg px-2 py-1.5 text-center text-sm font-semibold ${colors.input.primary} focus:border-blue-500`}
+                                  value={it.quantity}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    if (v === '') { updateItem(idx, { quantity: '' }); return; }
+                                    const n = parseInt(v, 10);
+                                    if (!isNaN(n) && n > 0) updateItem(idx, { quantity: n });
+                                  }}
+                                  onBlur={(e) => {
+                                    const n = parseInt(e.target.value, 10);
+                                    if (isNaN(n) || n < 1) updateItem(idx, { quantity: 1 });
+                                  }}
+                                />
                               </div>
-                            )}
-                          </div>
-
-                          {/* Quantity */}
-                          <div className="w-24">
-                            <label className={`block text-xs font-medium ${colors.text.secondary} mb-1.5`}>Qty</label>
-                            <input
-                              type="number"
-                              min="1"
-                              className={`w-full border-2 rounded-lg px-3 py-2.5 text-center text-base font-semibold ${colors.input.primary} focus:border-blue-500`}
-                              value={it.quantity}
-                              onChange={(e) => {
-                                const inputValue = e.target.value;
-                                // Allow empty string for deletion
-                                if (inputValue === '') {
-                                  updateItem(idx, { quantity: '' });
-                                  return;
-                                }
-                                const value = parseInt(inputValue, 10);
-                                // Only update if value is valid and greater than 0
-                                if (!isNaN(value) && value > 0) {
-                                  updateItem(idx, { quantity: value });
-                                }
-                              }}
-                              onBlur={(e) => {
-                                // Ensure minimum value of 1 when field loses focus
-                                const value = parseInt(e.target.value, 10);
-                                if (isNaN(value) || value < 1) {
-                                  updateItem(idx, { quantity: 1 });
-                                }
-                              }}
-                            />
-                          </div>
-
-                          {/* Unit Cost */}
-                          <div className="w-32">
-                            <label className={`block text-xs font-medium ${colors.text.secondary} mb-1.5`}>Unit Cost</label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              className={`w-full border-2 rounded-lg px-3 py-2.5 text-base ${colors.input.primary} focus:border-blue-500`}
-                              value={it.unitCost}
-                              onChange={(e) => {
-                                const value = parseFloat(e.target.value);
-                                updateItem(idx, { unitCost: value >= 0 ? value : 0 });
-                              }}
-                            />
-                          </div>
-
-                          {/* Subtotal */}
-                          <div className="w-32">
-                            <label className={`block text-xs font-medium ${colors.text.secondary} mb-1.5`}>Total</label>
-                            <div className={`w-full border-2 border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 rounded-lg px-3 py-2.5 ${colors.text.primary} font-bold text-base text-right`}>
-                              {formatCurrency(subtotal)}
+                              <div className="flex-1">
+                                <label className={`block text-[10px] font-medium ${colors.text.secondary} mb-1`}>Unit Cost (₱)</label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  className={`w-full border rounded-lg px-2 py-1.5 text-sm ${colors.input.primary} focus:border-blue-500`}
+                                  value={it.unitCost}
+                                  onChange={(e) => {
+                                    const v = parseFloat(e.target.value);
+                                    updateItem(idx, { unitCost: v >= 0 ? v : 0 });
+                                  }}
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <label className={`block text-[10px] font-medium ${colors.text.secondary} mb-1`}>Subtotal</label>
+                                <div className={`border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 rounded-lg px-2 py-1.5 text-sm font-bold text-right ${colors.text.primary}`}>
+                                  {formatCurrency(subtotal)}
+                                </div>
+                              </div>
                             </div>
                           </div>
+                        );
+                      })
+                    )}
+                  </div>
 
-                          {/* Remove Button */}
-                          <div className="flex-shrink-0 flex items-end">
-                            <button
-                              onClick={() => removeItem(idx)}
-                              className="p-2.5 text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-colors"
-                              title="Remove"
-                            >
-                              <TrashIcon className="h-5 w-5" />
-                            </button>
-                          </div>
+                  {/* Notes */}
+                  <div className={`px-5 py-3 border-t ${colors.border.primary} flex-shrink-0`}>
+                    <label className={`block text-xs font-semibold uppercase tracking-wider ${colors.text.secondary} mb-2`}>
+                      Order Notes <span className="font-normal opacity-70">(Optional)</span>
+                    </label>
+                    <textarea
+                      className={`w-full border rounded-xl px-3 py-2 text-sm ${colors.input.primary} resize-none`}
+                      placeholder="Special instructions or notes..."
+                      value={draft.notes}
+                      onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+                      rows={2}
+                    />
+                  </div>
+
+                  {/* Footer Actions */}
+                  <div className={`px-5 py-4 border-t-2 ${colors.border.primary} flex-shrink-0 ${colors.bg.secondary}`}>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-4">
+                        <div>
+                          <p className={`text-[10px] uppercase tracking-wider ${colors.text.secondary}`}>Items</p>
+                          <p className={`text-base font-bold ${colors.text.primary}`}>{draft.items.length}</p>
+                        </div>
+                        <div className={`h-8 w-px bg-gray-300 dark:bg-gray-700`}></div>
+                        <div>
+                          <p className={`text-[10px] uppercase tracking-wider ${colors.text.secondary}`}>Order Total</p>
+                          <p className={`text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent`}>
+                            {formatCurrency(draftTotal)}
+                          </p>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Notes Section - Always visible at bottom of items */}
-              {draft.items.length > 0 && (
-                <div className="mt-6">
-                  <label className={`block text-sm font-medium ${colors.text.secondary} mb-2`}>
-                    Order Notes <span className="text-xs opacity-75">(Optional)</span>
-                  </label>
-                  <textarea
-                    className={`w-full border rounded-lg px-4 py-3 ${colors.input.primary} resize-none`}
-                    placeholder="Add any special instructions or notes about this order..."
-                    value={draft.notes}
-                    onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
-                    rows={2}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* FIXED FOOTER - Order Summary & Actions */}
-            <div className={`px-6 py-4 border-t-2 ${colors.border.primary} flex-shrink-0 ${colors.bg.secondary}`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-6">
-                  <div>
-                    <p className={`text-xs ${colors.text.secondary} mb-1`}>Total Items</p>
-                    <p className={`text-lg font-bold ${colors.text.primary}`}>{draft.items.length}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setDraft({ supplierId: '', items: [], notes: '' });
+                          setProductSearch('');
+                          setShowCreateModal(false);
+                        }}
+                        className="flex-1 py-2.5 bg-gray-500 hover:bg-gray-600 text-white rounded-xl text-sm font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleReviewInvoice}
+                        disabled={draft.items.length === 0}
+                        className={`flex-1 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-2 transition-all shadow-md ${draft.items.length === 0
+                            ? 'bg-gray-300 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
+                            : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white'
+                          }`}
+                      >
+                        <EyeIcon className="h-4 w-4" />
+                        Review Invoice
+                      </button>
+                    </div>
                   </div>
-                  <div className={`h-10 w-px bg-gray-300 dark:bg-gray-700`}></div>
-                  <div>
-                    <p className={`text-xs ${colors.text.secondary} mb-1`}>Order Total</p>
-                    <p className={`text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent`}>
-                      {formatCurrency(draftTotal)}
+                </div>
+
+                {/* ===== RIGHT PANEL: Product Catalog ===== */}
+                <div className="flex-1 flex flex-col min-h-0">
+
+                  {/* Search bar */}
+                  <div className={`px-5 py-4 border-b ${colors.border.primary} flex-shrink-0`}>
+                    <div className="relative">
+                      <MagnifyingGlassIcon className={`h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 ${colors.text.tertiary}`} />
+                      <input
+                        type="text"
+                        placeholder="Search products by name, barcode, or SKU..."
+                        value={productSearch}
+                        onChange={(e) => setProductSearch(e.target.value)}
+                        className={`w-full pl-9 pr-4 py-2.5 border rounded-xl text-sm ${colors.input.primary} focus:border-blue-500`}
+                      />
+                      {productSearch && (
+                        <button
+                          onClick={() => setProductSearch('')}
+                          className={`absolute right-3 top-1/2 -translate-y-1/2 ${colors.text.tertiary} hover:text-red-500 transition-colors`}
+                        >
+                          <XMarkIcon className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                    <p className={`text-xs ${colors.text.secondary} mt-1.5`}>
+                      {filteredCatalogProducts.length} product{filteredCatalogProducts.length !== 1 ? 's' : ''} · Click a card to add to cart
                     </p>
                   </div>
+
+                  {/* Product grid — scrollable */}
+                  <div className="flex-1 overflow-y-auto p-4">
+                    {filteredCatalogProducts.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full text-center">
+                        <MagnifyingGlassIcon className={`h-12 w-12 mb-3 ${colors.text.tertiary}`} />
+                        <p className={`font-semibold ${colors.text.primary}`}>No products found</p>
+                        <p className={`text-sm ${colors.text.secondary} mt-1`}>Try a different search term</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
+                        {filteredCatalogProducts.map(product => {
+                          const inCart = draft.items.find(it => it.productId === product.id);
+                          const cartQty = inCart ? Number(inCart.quantity) : 0;
+                          return (
+                            <button
+                              key={product.id}
+                              onClick={() => addProductToCart(product)}
+                              className={`text-left p-3 rounded-xl border-2 transition-all hover:shadow-md active:scale-95 ${inCart
+                                  ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                                  : `${colors.card.primary} ${colors.border.primary} hover:border-blue-300 dark:hover:border-blue-600`
+                                }`}
+                            >
+                              <div className="flex items-start justify-between gap-2 mb-2">
+                                <div className={`flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center ${inCart ? 'bg-blue-500 text-white' : `${colors.bg.secondary} ${colors.text.secondary}`
+                                  }`}>
+                                  {inCart ? (
+                                    <span className="text-sm font-black">{cartQty}</span>
+                                  ) : (
+                                    <CubeIcon className="h-5 w-5" />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-xs font-semibold leading-tight line-clamp-2 ${colors.text.primary}`}>
+                                    {product.name}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between gap-1 flex-wrap">
+                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${(product.quantity || 0) > 0
+                                    ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+                                    : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                                  }`}>
+                                  Stock: {product.quantity || 0}
+                                </span>
+                                <span className={`text-[10px] font-bold ${colors.text.primary}`}>
+                                  {formatCurrency(parseFloat(product.price || 0))}
+                                </span>
+                              </div>
+                              {inCart && (
+                                <div className="mt-1.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400">
+                                  ✓ In cart · tap to add more
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => {
-                      setDraft({ supplierId: '', items: [], notes: '' });
-                      setShowCreateModal(false);
-                      setProductSearchTerms({});
-                      setShowProductDropdown({});
-                    }}
-                    className="px-6 py-3 bg-gray-500 hover:bg-gray-600 text-white rounded-xl font-medium transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleReviewInvoice}
-                    disabled={draft.items.length === 0}
-                    className={`px-8 py-3 rounded-xl font-semibold inline-flex items-center gap-2 transition-all shadow-lg ${draft.items.length === 0
-                      ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white'
-                      }`}
-                  >
-                    <EyeIcon className="h-6 w-6" />
-                    Review Invoice
-                  </button>
-                </div>
+
               </div>
             </div>
           </div>
-        </div>
         </ModalPortal>
       )}
 
       {/* Cancel Confirmation Modal */}
       {showCancelModal && orderToCancel && (
         <ModalPortal>
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={closeCancelModal}>
-          <div
-            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-md`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
-              <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Cancel Purchase Order</h3>
-              <p className={`text-sm ${colors.text.secondary} mt-1`}>
-                Are you sure you want to cancel this purchase order?
-              </p>
-            </div>
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={closeCancelModal}>
+            <div
+              className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-md`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
+                <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Cancel Purchase Order</h3>
+                <p className={`text-sm ${colors.text.secondary} mt-1`}>
+                  Are you sure you want to cancel this purchase order?
+                </p>
+              </div>
 
-            <div className="px-6 py-4">
-              <div className={`p-4 rounded-lg ${colors.bg.secondary} mb-4`}>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className={`text-xs ${colors.text.secondary}`}>PO Number</p>
-                    <p className={`text-sm font-medium ${colors.text.primary}`}>{orderToCancel.id}</p>
-                  </div>
-                  <div>
-                    <p className={`text-xs ${colors.text.secondary}`}>Supplier</p>
-                    {orderToCancel.supplier_id && orderToCancel.supplier_id !== 'na-supplier-default' ? (
-                      <button
-                        onClick={() => window.open('/suppliers', '_blank')}
-                        className={`text-sm font-medium ${colors.text.primary} hover:text-blue-600 dark:hover:text-blue-400 underline decoration-dotted hover:decoration-solid transition-all`}
-                        title="Open Suppliers page in new tab"
-                      >
-                        {orderToCancel.supplierName || orderToCancel.supplier_id}
-                      </button>
-                    ) : (
-                      <p className={`text-sm font-medium ${colors.text.secondary}`}>
-                        {orderToCancel.supplierName || '—'}
+              <div className="px-6 py-4">
+                <div className={`p-4 rounded-lg ${colors.bg.secondary} mb-4`}>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className={`text-xs ${colors.text.secondary}`}>PO Number</p>
+                      <p className={`text-sm font-medium ${colors.text.primary}`}>{orderToCancel.id}</p>
+                    </div>
+                    <div>
+                      <p className={`text-xs ${colors.text.secondary}`}>Supplier</p>
+                      {orderToCancel.supplier_id && orderToCancel.supplier_id !== 'na-supplier-default' ? (
+                        <button
+                          onClick={() => window.open('/suppliers', '_blank')}
+                          className={`text-sm font-medium ${colors.text.primary} hover:text-blue-600 dark:hover:text-blue-400 underline decoration-dotted hover:decoration-solid transition-all`}
+                          title="Open Suppliers page in new tab"
+                        >
+                          {orderToCancel.supplierName || orderToCancel.supplier_id}
+                        </button>
+                      ) : (
+                        <p className={`text-sm font-medium ${colors.text.secondary}`}>
+                          {orderToCancel.supplierName || '—'}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <p className={`text-xs ${colors.text.secondary}`}>Date</p>
+                      <p className={`text-sm font-medium ${colors.text.primary}`}>
+                        {formatDate(orderToCancel.order_date)}
                       </p>
-                    )}
+                    </div>
+                    <div>
+                      <p className={`text-xs ${colors.text.secondary}`}>Total Amount</p>
+                      <p className={`text-sm font-medium ${colors.text.primary}`}>
+                        {formatCurrency(orderToCancel.total)}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className={`text-xs ${colors.text.secondary}`}>Date</p>
-                    <p className={`text-sm font-medium ${colors.text.primary}`}>
-                      {formatDate(orderToCancel.order_date)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className={`text-xs ${colors.text.secondary}`}>Total Amount</p>
-                    <p className={`text-sm font-medium ${colors.text.primary}`}>
-                      {formatCurrency(orderToCancel.total)}
-                    </p>
-                  </div>
+                </div>
+
+                <div className={`p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800`}>
+                  <p className={`text-sm text-red-800 dark:text-red-300`}>
+                    <strong>Warning:</strong> This action cannot be undone. The purchase order will be marked as cancelled.
+                  </p>
                 </div>
               </div>
 
-              <div className={`p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800`}>
-                <p className={`text-sm text-red-800 dark:text-red-300`}>
-                  <strong>Warning:</strong> This action cannot be undone. The purchase order will be marked as cancelled.
-                </p>
+              <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
+                <button
+                  onClick={closeCancelModal}
+                  className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600"
+                >
+                  No, Keep It
+                </button>
+                <button
+                  onClick={confirmCancelPO}
+                  className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 inline-flex items-center gap-2"
+                >
+                  <XCircleIcon className="h-5 w-5" />
+                  Yes, Cancel Order
+                </button>
               </div>
             </div>
-
-            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
-              <button
-                onClick={closeCancelModal}
-                className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600"
-              >
-                No, Keep It
-              </button>
-              <button
-                onClick={confirmCancelPO}
-                className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 inline-flex items-center gap-2"
-              >
-                <XCircleIcon className="h-5 w-5" />
-                Yes, Cancel Order
-              </button>
-            </div>
           </div>
-        </div>
         </ModalPortal>
       )}
 
       {/* Receipt Modal */}
       {showReceipt && (
         <ModalPortal>
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setShowReceipt(null)}>
-          <div
-            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-lg max-h-[90vh] flex flex-col`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={`px-6 py-4 border-b ${colors.border.primary} flex-shrink-0`}>
-              <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Purchase Order Receipt</h3>
-              <p className={`${colors.text.secondary} text-sm`}>
-                PO #: {showReceipt.id} • {formatDate(showReceipt.order_date)}
-              </p>
-            </div>
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setShowReceipt(null)}>
+            <div
+              className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-lg max-h-[90vh] flex flex-col`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={`px-6 py-4 border-b ${colors.border.primary} flex-shrink-0`}>
+                <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Purchase Order Receipt</h3>
+                <p className={`${colors.text.secondary} text-sm`}>
+                  PO #: {showReceipt.id} • {formatDate(showReceipt.order_date)}
+                </p>
+              </div>
 
-            <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0">
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div>
-                  <p className={`text-xs ${colors.text.secondary}`}>Supplier</p>
-                  {showReceipt.supplier_id && showReceipt.supplier_id !== 'na-supplier-default' ? (
-                    <button
-                      onClick={() => {
-                        const supplier = suppliers.find(s => s.id === showReceipt.supplier_id);
-                        if (supplier) {
-                          const messengerUrl = supplier.messenger_url || supplier.messengerUrl;
-                          const facebookUrl = supplier.facebook_url || supplier.facebookUrl;
+              <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0">
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <p className={`text-xs ${colors.text.secondary}`}>Supplier</p>
+                    {showReceipt.supplier_id && showReceipt.supplier_id !== 'na-supplier-default' ? (
+                      <button
+                        onClick={() => {
+                          const supplier = suppliers.find(s => s.id === showReceipt.supplier_id);
+                          if (supplier) {
+                            const messengerUrl = supplier.messenger_url || supplier.messengerUrl;
+                            const facebookUrl = supplier.facebook_url || supplier.facebookUrl;
 
-                          if (messengerUrl) {
-                            window.open(messengerUrl, '_blank');
-                          } else if (facebookUrl) {
-                            const fbId = facebookUrl.match(/facebook\.com\/([^/?]+)/)?.[1];
-                            if (fbId) {
-                              window.open(`https://m.me/${fbId}`, '_blank');
+                            if (messengerUrl) {
+                              window.open(messengerUrl, '_blank');
+                            } else if (facebookUrl) {
+                              const fbId = facebookUrl.match(/facebook\.com\/([^/?]+)/)?.[1];
+                              if (fbId) {
+                                window.open(`https://m.me/${fbId}`, '_blank');
+                              } else {
+                                window.open(facebookUrl, '_blank');
+                              }
                             } else {
-                              window.open(facebookUrl, '_blank');
+                              toast.error('No messenger link available for this supplier');
                             }
                           } else {
-                            toast.error('No messenger link available for this supplier');
+                            toast.error('Supplier information not found');
                           }
-                        } else {
-                          toast.error('Supplier information not found');
-                        }
-                      }}
-                      className={`text-sm font-medium ${colors.text.primary} hover:text-blue-600 dark:hover:text-blue-400 underline decoration-dotted hover:decoration-solid transition-all`}
-                      title="Open supplier's messenger or social links"
-                    >
-                      {showReceipt.supplierName || showReceipt.supplier_id}
-                    </button>
-                  ) : (
-                    <p className={`text-sm font-medium ${colors.text.secondary}`}>
-                      {showReceipt.supplierName || '—'}
-                    </p>
-                  )}
+                        }}
+                        className={`text-sm font-medium ${colors.text.primary} hover:text-blue-600 dark:hover:text-blue-400 underline decoration-dotted hover:decoration-solid transition-all`}
+                        title="Open supplier's messenger or social links"
+                      >
+                        {showReceipt.supplierName || showReceipt.supplier_id}
+                      </button>
+                    ) : (
+                      <p className={`text-sm font-medium ${colors.text.secondary}`}>
+                        {showReceipt.supplierName || '—'}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <p className={`text-xs ${colors.text.secondary}`}>Status</p>
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${showReceipt.status === 'received'
+                      ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300'
+                      : showReceipt.status === 'cancelled'
+                        ? 'bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300'
+                        : 'bg-amber-100 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300'
+                      }`}>
+                      {showReceipt.status.toUpperCase()}
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <p className={`text-xs ${colors.text.secondary}`}>Status</p>
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${showReceipt.status === 'received'
-                    ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300'
-                    : showReceipt.status === 'cancelled'
-                      ? 'bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300'
-                      : 'bg-amber-100 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300'
-                    }`}>
-                    {showReceipt.status.toUpperCase()}
-                  </span>
-                </div>
-              </div>
 
-              {showReceipt.notes && (
-                <div className="mb-4">
-                  <p className={`text-xs ${colors.text.secondary}`}>Notes</p>
-                  <p className={`text-sm ${colors.text.primary}`}>{showReceipt.notes}</p>
-                </div>
-              )}
+                {showReceipt.notes && (
+                  <div className="mb-4">
+                    <p className={`text-xs ${colors.text.secondary}`}>Notes</p>
+                    <p className={`text-sm ${colors.text.primary}`}>{showReceipt.notes}</p>
+                  </div>
+                )}
 
-              <div className="overflow-x-auto rounded-lg border ${colors.border.primary}">
-                <table className={`min-w-full divide-y ${colors.border.primary}`}>
-                  <thead className={`${colors.bg.secondary}`}>
-                    <tr>
-                      <th className={`px-3 py-2 text-left text-xs font-medium ${colors.text.secondary} uppercase`}>Product</th>
-                      <th className={`px-3 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Qty</th>
-                      <th className={`px-3 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Unit Cost</th>
-                      <th className={`px-3 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Subtotal</th>
-                    </tr>
-                  </thead>
-                  <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
-                    {showReceipt.items?.map((it) => (
-                      <tr key={it.id}>
-                        <td className={`px-3 py-2 ${colors.text.primary} whitespace-normal break-words max-w-[220px]`}>{it.productName}</td>
-                        <td className={`px-3 py-2 text-right ${colors.text.secondary}`}>{it.quantity}</td>
-                        <td className={`px-3 py-2 text-right ${colors.text.secondary}`}>{formatCurrency(it.unit_cost)}</td>
-                        <td className={`px-3 py-2 text-right ${colors.text.secondary}`}>{formatCurrency(it.subtotal)}</td>
+                <div className="overflow-x-auto rounded-lg border ${colors.border.primary}">
+                  <table className={`min-w-full divide-y ${colors.border.primary}`}>
+                    <thead className={`${colors.bg.secondary}`}>
+                      <tr>
+                        <th className={`px-3 py-2 text-left text-xs font-medium ${colors.text.secondary} uppercase`}>Product</th>
+                        <th className={`px-3 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Qty</th>
+                        <th className={`px-3 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Unit Cost</th>
+                        <th className={`px-3 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Subtotal</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
+                      {showReceipt.items?.map((it) => (
+                        <tr key={it.id}>
+                          <td className={`px-3 py-2 ${colors.text.primary} whitespace-normal break-words max-w-[220px]`}>{it.productName}</td>
+                          <td className={`px-3 py-2 text-right ${colors.text.secondary}`}>{it.quantity}</td>
+                          <td className={`px-3 py-2 text-right ${colors.text.secondary}`}>{formatCurrency(it.unit_cost)}</td>
+                          <td className={`px-3 py-2 text-right ${colors.text.secondary}`}>{formatCurrency(it.subtotal)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
-              <div className="flex items-center justify-end mt-4 pt-4 border-t ${colors.border.primary}">
-                <div className={`text-lg font-semibold ${colors.text.primary}`}>
-                  Total: {formatCurrency(showReceipt.total || 0)}
+                <div className="flex items-center justify-end mt-4 pt-4 border-t ${colors.border.primary}">
+                  <div className={`text-lg font-semibold ${colors.text.primary}`}>
+                    Total: {formatCurrency(showReceipt.total || 0)}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-between flex-shrink-0`}>
-              <button
-                onClick={() => {
-                  try {
-                    const supplier = suppliers.find(s => s.id === showReceipt.supplier_id);
-                    const pdfItems = showReceipt.items?.map(item => ({
-                      productName: item.productName,
-                      quantity: item.quantity,
-                      unitCost: item.unit_cost
-                    })) || [];
-                    downloadPurchaseOrderPDF(showReceipt, pdfItems, supplier);
-                    toast.success('PDF downloaded successfully!');
-                  } catch (error) {
-                    console.error('Failed to download PDF:', error);
-                    toast.error('Failed to download PDF');
-                  }
-                }}
-                className="px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 inline-flex items-center gap-2"
-              >
-                <DocumentArrowDownIcon className="h-5 w-5" />
-                Download PDF
-              </button>
-              <button
-                onClick={() => setShowReceipt(null)}
-                className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600"
-              >
-                Close
-              </button>
+              <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-between flex-shrink-0`}>
+                <button
+                  onClick={() => {
+                    try {
+                      const supplier = suppliers.find(s => s.id === showReceipt.supplier_id);
+                      const pdfItems = showReceipt.items?.map(item => ({
+                        productName: item.productName,
+                        quantity: item.quantity,
+                        unitCost: item.unit_cost
+                      })) || [];
+                      downloadPurchaseOrderPDF(showReceipt, pdfItems, supplier);
+                      toast.success('PDF downloaded successfully!');
+                    } catch (error) {
+                      console.error('Failed to download PDF:', error);
+                      toast.error('Failed to download PDF');
+                    }
+                  }}
+                  className="px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 inline-flex items-center gap-2"
+                >
+                  <DocumentArrowDownIcon className="h-5 w-5" />
+                  Download PDF
+                </button>
+                <button
+                  onClick={() => setShowReceipt(null)}
+                  className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
-        </div>
         </ModalPortal>
       )}
 
@@ -1237,7 +1254,7 @@ const PurchaseOrdersScreen = () => {
           onSaveOnly={() => executePO('SAVE_ONLY')}
           onSendTo={() => executePO('SEND')}
           onDiscard={() => {
-             setShowPreviewModal(false);
+            setShowPreviewModal(false);
           }}
         />
       )}
