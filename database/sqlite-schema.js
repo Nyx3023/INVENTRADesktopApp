@@ -190,6 +190,24 @@ export async function initializeDatabase() {
       }
     }
 
+    // Phase 2: POS workflow columns on transactions (status, balance_due, customer_phone, customer_name)
+    const phase2TxColumns = [
+      { name: 'status', sql: `ALTER TABLE transactions ADD COLUMN status TEXT NOT NULL DEFAULT 'completed';` },
+      { name: 'balance_due', sql: `ALTER TABLE transactions ADD COLUMN balance_due REAL NOT NULL DEFAULT 0.00;` },
+      { name: 'customer_name', sql: `ALTER TABLE transactions ADD COLUMN customer_name TEXT;` },
+      { name: 'customer_phone', sql: `ALTER TABLE transactions ADD COLUMN customer_phone TEXT;` },
+    ];
+    for (const col of phase2TxColumns) {
+      try {
+        db.exec(col.sql);
+        console.log(`Added ${col.name} column to transactions table`);
+      } catch (e) {
+        if (!e.message.includes('duplicate column name')) {
+          console.error(`Error adding ${col.name} column:`, e);
+        }
+      }
+    }
+
     // Create audits table
     db.exec(`
       CREATE TABLE IF NOT EXISTS audits (
@@ -244,6 +262,53 @@ export async function initializeDatabase() {
       )
     `);
 
+    // Phase 2: payments table (supports layaway / partial payments; also a 1-row ledger for single-payment sales)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id TEXT PRIMARY KEY,
+        transaction_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        payment_method TEXT NOT NULL,
+        reference_number TEXT,
+        user_id TEXT,
+        user_name TEXT,
+        notes TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Phase 2: refunds table (header)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS refunds (
+        id TEXT PRIMARY KEY,
+        transaction_id TEXT NOT NULL,
+        refund_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        reason TEXT NOT NULL,
+        notes TEXT,
+        total_amount REAL NOT NULL,
+        processed_by TEXT,
+        processed_by_id TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Phase 2: refund_items table (which products, how many, whether to return to stock)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS refund_items (
+        id TEXT PRIMARY KEY,
+        refund_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        unit_price REAL NOT NULL,
+        subtotal REAL NOT NULL,
+        return_to_stock INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY (refund_id) REFERENCES refunds(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
+      )
+    `);
+
     // Create outbox table
     db.exec(`
       CREATE TABLE IF NOT EXISTS outbox (
@@ -283,6 +348,9 @@ export async function initializeDatabase() {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_name)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_products_deleted ON products(deleted_at)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_products_quantity ON products(quantity)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_products_status ON products(status)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(name)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier ON purchase_orders(supplier_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status)`);
@@ -290,8 +358,11 @@ export async function initializeDatabase() {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_purchase_order_items_product ON purchase_order_items(product_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_archived ON transactions(archived_at)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_transaction_items_transaction ON transaction_items(transaction_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_transaction_items_product ON transaction_items(product_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_transaction_items_product_date ON transaction_items(product_id, created_at)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_audits_date ON audits(audit_date)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_audits_type ON audits(audit_type)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_stock_adjustments_product ON stock_adjustments(product_id)`);
@@ -303,6 +374,10 @@ export async function initializeDatabase() {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_activity_logs_action ON activity_logs(action)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_activity_logs_entity ON activity_logs(entity_type, entity_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_activity_logs_created ON activity_logs(created_at)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_payments_transaction ON payments(transaction_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_refunds_transaction ON refunds(transaction_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_refund_items_refund ON refund_items(refund_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_refund_items_product ON refund_items(product_id)`);
 
     // Insert default admin user if not exists (INSERT OR IGNORE handles any existing id/email)
     const adminExists = db.prepare('SELECT id FROM users WHERE id = ? OR email = ?').get('admin-001', 'admin@gmail.com');

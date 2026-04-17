@@ -98,12 +98,92 @@ export const authService = {
   },
 };
 
+const buildQuery = (params = {}) => {
+  const qp = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      qp.append(key, value);
+    }
+  });
+  const qs = qp.toString();
+  return qs ? `?${qs}` : '';
+};
+
 export const productService = {
-  getAll: async () => {
+  // Legacy: returns a plain array (used where pagination is not wanted).
+  getAll: async (params) => {
+    if (params && typeof params === 'object') {
+      return productService.list(params);
+    }
     const data = hasNativeBridge
       ? await nativeCall('products', 'list')
       : await fetchJson(`${API_URL}/products`);
     return normalizeProductList(data);
+  },
+
+  // Paginated list: returns { rows, total }.
+  list: async (params = {}) => {
+    if (hasNativeBridge) {
+      const data = await nativeCall('products', 'list', params);
+      if (data && Array.isArray(data.rows)) {
+        data.rows = await normalizeProductList(data.rows);
+        return data;
+      }
+      const rows = await normalizeProductList(data || []);
+      return { rows, total: rows.length };
+    }
+    const data = await fetchJson(`${API_URL}/products${buildQuery(params)}`);
+    if (data && Array.isArray(data.rows)) {
+      data.rows = await normalizeProductList(data.rows);
+      return data;
+    }
+    const rows = await normalizeProductList(Array.isArray(data) ? data : []);
+    return { rows, total: rows.length };
+  },
+
+  listDeleted: async (params = {}) => {
+    return productService.list({ ...params, includeDeleted: 'only' });
+  },
+
+  restore: async (id) => {
+    const user = getCurrentUser();
+    const payload = {
+      userId: user?.id,
+      userName: user?.name,
+      userEmail: user?.email,
+    };
+    if (hasNativeBridge) {
+      return nativeCall('products', 'restore', { id, ...payload });
+    }
+    return fetchJson(`${API_URL}/products/${id}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  },
+
+  permanentDelete: async (id) => {
+    const user = getCurrentUser();
+    const payload = {
+      userId: user?.id,
+      userName: user?.name,
+      userEmail: user?.email,
+    };
+    if (hasNativeBridge) {
+      return nativeCall('products', 'permanentDelete', { id, ...payload });
+    }
+    return fetchJson(`${API_URL}/products/${id}/permanent`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getHistory: async (id, params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('products', 'history', { id, ...params });
+    }
+    return fetchJson(`${API_URL}/products/${id}/history${buildQuery(params)}`);
   },
 
   getById: async (id) => {
@@ -213,7 +293,14 @@ export const transactionService = {
     if (hasNativeBridge) {
       return nativeCall('transactions', 'list', params);
     }
-    return fetchJson(`${API_URL}/transactions`);
+    return fetchJson(`${API_URL}/transactions${buildQuery(params)}`);
+  },
+
+  list: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('transactions', 'list', params);
+    }
+    return fetchJson(`${API_URL}/transactions${buildQuery(params)}`);
   },
 
   getById: async (id) => {
@@ -245,7 +332,89 @@ export const transactionService = {
     if (hasNativeBridge) {
       return nativeCall('transactions', 'list', { startDate, endDate });
     }
-    return fetchJson(`${API_URL}/transactions?startDate=${startDate}&endDate=${endDate}`);
+    return fetchJson(`${API_URL}/transactions${buildQuery({ startDate, endDate })}`);
+  },
+
+  hold: async (transaction) => {
+    if (hasNativeBridge) {
+      return nativeCall('transactions', 'hold', { transaction });
+    }
+    return fetchJson(`${API_URL}/transactions/hold`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(transaction),
+    });
+  },
+
+  resume: async (id) => {
+    if (hasNativeBridge) {
+      return nativeCall('transactions', 'resume', { id });
+    }
+    return fetchJson(`${API_URL}/transactions/${id}/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+  },
+
+  deleteHeld: async (id) => {
+    if (hasNativeBridge) {
+      return nativeCall('transactions', 'deleteHeld', { id });
+    }
+    return fetchJson(`${API_URL}/transactions/${id}/hold`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+    });
+  },
+
+  listHeld: async (params = {}) => {
+    return transactionService.list({ ...params, status: 'held' });
+  },
+
+  listLayaway: async (params = {}) => {
+    return transactionService.list({ ...params, status: 'layaway' });
+  },
+
+  createLayaway: async (transaction) => {
+    if (hasNativeBridge) {
+      return nativeCall('transactions', 'createLayaway', { transaction });
+    }
+    return fetchJson(`${API_URL}/transactions/layaway`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(transaction),
+    });
+  },
+
+  addPayment: async (id, payment) => {
+    const user = getCurrentUser();
+    const payload = {
+      ...payment,
+      userId: user?.id,
+      userName: user?.name,
+      userEmail: user?.email,
+    };
+    if (hasNativeBridge) {
+      return nativeCall('transactions', 'addPayment', { id, payment: payload });
+    }
+    return fetchJson(`${API_URL}/transactions/${id}/payments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getPayments: async (id) => {
+    if (hasNativeBridge) {
+      return nativeCall('transactions', 'getPayments', { id });
+    }
+    return fetchJson(`${API_URL}/transactions/${id}/payments`);
+  },
+
+  getRefundable: async (id) => {
+    if (hasNativeBridge) {
+      return nativeCall('transactions', 'getRefundable', { id });
+    }
+    return fetchJson(`${API_URL}/transactions/${id}/refundable`);
   },
 
   delete: async (id, userRole) => {
@@ -602,6 +771,84 @@ export const stockAdjustmentService = {
       return nativeCall('stockAdjustments', 'get', { id });
     }
     return fetchJson(`${API_URL}/stock-adjustments/${id}`);
+  },
+};
+
+export const refundService = {
+  create: async (refund) => {
+    const user = getCurrentUser();
+    const payload = {
+      ...refund,
+      userId: user?.id,
+      userName: user?.name,
+      userEmail: user?.email,
+    };
+    if (hasNativeBridge) {
+      return nativeCall('refunds', 'create', payload);
+    }
+    return fetchJson(`${API_URL}/refunds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  },
+
+  list: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('refunds', 'list', params);
+    }
+    return fetchJson(`${API_URL}/refunds${buildQuery(params)}`);
+  },
+
+  getById: async (id) => {
+    if (hasNativeBridge) {
+      return nativeCall('refunds', 'get', { id });
+    }
+    return fetchJson(`${API_URL}/refunds/${id}`);
+  },
+};
+
+export const adminOverrideService = {
+  verify: async ({ password, context }) => {
+    const user = getCurrentUser();
+    const payload = {
+      password,
+      context,
+      triggeredByUserId: user?.id,
+      triggeredByUserName: user?.name,
+      triggeredByUserEmail: user?.email,
+    };
+    if (hasNativeBridge) {
+      return nativeCall('auth', 'verifyAdmin', payload);
+    }
+    return fetchJson(`${API_URL}/auth/verify-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  },
+};
+
+export const reportService = {
+  abcAnalysis: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('reports', 'abcAnalysis', params);
+    }
+    return fetchJson(`${API_URL}/reports/abc-analysis${buildQuery(params)}`);
+  },
+
+  deadStock: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('reports', 'deadStock', params);
+    }
+    return fetchJson(`${API_URL}/reports/dead-stock${buildQuery(params)}`);
+  },
+
+  profit: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('reports', 'profit', params);
+    }
+    return fetchJson(`${API_URL}/reports/profit${buildQuery(params)}`);
   },
 };
 

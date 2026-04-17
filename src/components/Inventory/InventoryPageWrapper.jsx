@@ -6,7 +6,8 @@ import {
   ClipboardDocumentListIcon,
   ShoppingCartIcon,
   TruckIcon,
-  ScaleIcon
+  ScaleIcon,
+  ArchiveBoxIcon
 } from '@heroicons/react/24/outline';
 
 // Lazy load the tab components
@@ -15,6 +16,7 @@ const AuditsTab = lazy(() => import('../Audits/AuditsScreen'));
 const PurchaseOrdersTab = lazy(() => import('./PurchaseOrdersScreen'));
 const SuppliersTab = lazy(() => import('./SuppliersScreen'));
 const StockAdjustmentsTab = lazy(() => import('./StockAdjustmentsScreen'));
+const DeletedProductsTab = lazy(() => import('./DeletedProductsScreen'));
 
 const LoadingSpinner = () => (
   <div className="h-full flex items-center justify-center min-h-[400px]">
@@ -37,6 +39,7 @@ const InventoryPageWrapper = () => {
     { id: 'audits', name: 'Audits', icon: ClipboardDocumentListIcon, permission: 'perform_audits' },
     { id: 'purchase', name: 'Purchase Products', icon: ShoppingCartIcon, permission: 'manage_purchase_orders' },
     { id: 'suppliers', name: 'Suppliers', icon: TruckIcon, permission: 'manage_suppliers' },
+    { id: 'deleted', name: 'Deleted', icon: ArchiveBoxIcon, permission: 'delete_product' },
   ];
 
   const visibleTabs = tabs.filter(tab => hasPermission(tab.permission));
@@ -53,6 +56,8 @@ const InventoryPageWrapper = () => {
         return hasPermission('manage_purchase_orders') ? <PurchaseOrdersTab /> : null;
       case 'suppliers':
         return hasPermission('manage_suppliers') ? <SuppliersTab /> : null;
+      case 'deleted':
+        return hasPermission('delete_product') ? <DeletedProductsTab /> : null;
       default:
         return hasPermission('view_inventory') ? <ProductsTab /> : null;
     }

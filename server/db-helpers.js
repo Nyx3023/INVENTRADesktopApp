@@ -113,5 +113,45 @@ export async function withTransaction(callback) {
   }
 }
 
+/**
+ * Compute a minimal before/after diff for two objects.
+ *
+ * Given a whitelist of fields, returns only fields that actually changed,
+ * plus a list of changed field names. Used by audit logging to keep
+ * activity_logs.details payloads small.
+ *
+ * @param {object} before
+ * @param {object} after
+ * @param {string[]} whitelist - only these keys are considered
+ * @returns {{ before: object, after: object, changed_fields: string[] }}
+ */
+export function diffFields(before, after, whitelist) {
+  const beforeDiff = {};
+  const afterDiff = {};
+  const changed = [];
+  const keys = Array.isArray(whitelist) && whitelist.length
+    ? whitelist
+    : Object.keys({ ...(before || {}), ...(after || {}) });
+
+  for (const key of keys) {
+    const b = before ? before[key] : undefined;
+    const a = after ? after[key] : undefined;
+    // Normalise nullish values so null vs undefined isn't a false positive
+    const bn = b === undefined ? null : b;
+    const an = a === undefined ? null : a;
+    // Compare numerics loosely (DB sometimes returns strings for REAL)
+    const changedVal = typeof bn === 'number' || typeof an === 'number'
+      ? Number(bn) !== Number(an)
+      : bn !== an;
+    if (changedVal) {
+      beforeDiff[key] = bn;
+      afterDiff[key] = an;
+      changed.push(key);
+    }
+  }
+
+  return { before: beforeDiff, after: afterDiff, changed_fields: changed };
+}
+
 // Export db for direct access when needed
 export { db };

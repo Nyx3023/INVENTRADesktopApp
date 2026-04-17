@@ -41,12 +41,42 @@ export const formatDetailsForTable = (log) => {
 
       case 'UPDATE_PRODUCT': {
         const name = details.name || details.productName || '';
+        if (Array.isArray(details.changed_fields) && details.changed_fields.length) {
+          return `Updated ${name ? `"${name}" — ` : ''}${details.changed_fields.map(humanizeKey).join(', ')}`;
+        }
         if (details.changes) {
           const keys = Object.keys(details.changes);
           return `Updated ${name ? `"${name}" — ` : ''}${keys.map(humanizeKey).join(', ')}`;
         }
         return `Updated product${name ? ` "${name}"` : ''}`;
       }
+
+      case 'PRODUCT_PRICE_CHANGE':
+        return `Price changed${details.productName ? ` for "${details.productName}"` : ''}: ${formatCurrency(details.old_price)} → ${formatCurrency(details.new_price)}`;
+
+      case 'RESTORE_PRODUCT':
+        return `Restored "${details.name || details.productName || details.product_name || 'product'}"`;
+
+      case 'PERMANENT_DELETE_PRODUCT':
+        return `Permanently deleted "${details.name || details.productName || details.product_name || 'product'}"`;
+
+      case 'STOCK_MOVEMENT':
+        return `Stock movement (${details.movementType || 'transfer'}) for "${details.productName || 'product'}": ${details.quantity || 0} units`;
+
+      case 'SALE_HELD':
+        return `Held sale${details.transaction_id ? ` #${details.transaction_id}` : ''}${details.itemCount ? ` — ${details.itemCount} items` : ''}`;
+
+      case 'SALE_RESUMED':
+        return `Resumed held sale${details.transaction_id ? ` #${details.transaction_id}` : ''}`;
+
+      case 'PAYMENT_ADDED':
+        return `Payment of ${formatCurrency(details.amount)} applied${details.transaction_id ? ` to #${details.transaction_id}` : ''}${details.balance_due !== undefined ? ` (balance: ${formatCurrency(details.balance_due)})` : ''}`;
+
+      case 'REFUND_ISSUED':
+        return `Refund issued${details.transaction_id ? ` for #${details.transaction_id}` : ''} — ${formatCurrency(details.total_amount)}${details.reason ? ` (${details.reason})` : ''}`;
+
+      case 'ADMIN_OVERRIDE':
+        return `Admin override${details.context ? ` — ${details.context}` : ''}`;
 
       case 'DELETE_PRODUCT':
         return `Deleted "${details.name || details.productName || details.product_name || 'product'}"`;
@@ -197,7 +227,27 @@ export const formatDetailsForModal = (log) => {
           details.barcode ? `Barcode: ${details.barcode}` : null,
         ].filter(Boolean));
 
-      case 'UPDATE_PRODUCT':
+      case 'UPDATE_PRODUCT': {
+        // New shape: { before: {...}, after: {...}, changed_fields: [...] }
+        if (Array.isArray(details.changed_fields) && details.before && details.after) {
+          const changeList = details.changed_fields.map((k) => {
+            const oldVal = details.before[k];
+            const newVal = details.after[k];
+            const label = humanizeKey(k);
+            if (['price', 'cost'].includes(k)) {
+              return `${label}: ${formatCurrency(oldVal)} → ${formatCurrency(newVal)}`;
+            }
+            const fmt = (v) => (v === null || v === undefined || v === '') ? '—' : String(v);
+            return `${label}: "${fmt(oldVal)}" → "${fmt(newVal)}"`;
+          });
+          return (
+            <div>
+              <p className="text-sm font-medium mb-1">Changes made:</p>
+              {renderList(changeList)}
+            </div>
+          );
+        }
+        // Legacy shape: details.changes
         if (details.changes) {
           const changeList = Object.entries(details.changes).map(([k, v]) => {
             const oldVal = v.old !== undefined ? v.old : 'None';
@@ -217,9 +267,71 @@ export const formatDetailsForModal = (log) => {
         }
         return renderList(
           Object.entries(details)
-            .filter(([, v]) => v !== null && v !== undefined)
-            .map(([k, v]) => `${humanizeKey(k)}: ${v}`)
+            .filter(([k, v]) => v !== null && v !== undefined && !['before', 'after'].includes(k))
+            .map(([k, v]) => `${humanizeKey(k)}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
         );
+      }
+
+      case 'PRODUCT_PRICE_CHANGE':
+        return renderList([
+          details.productName ? `Product: ${details.productName}` : null,
+          `Old price: ${formatCurrency(details.old_price)}`,
+          `New price: ${formatCurrency(details.new_price)}`,
+          details.delta !== undefined ? `Change: ${(details.delta >= 0 ? '+' : '')}${formatCurrency(details.delta)}` : null,
+        ].filter(Boolean));
+
+      case 'RESTORE_PRODUCT':
+      case 'PERMANENT_DELETE_PRODUCT':
+        return renderList([
+          `Product: ${details.name || details.productName || details.product_name || 'Unknown'}`,
+          details.reason ? `Reason: ${details.reason}` : null,
+        ].filter(Boolean));
+
+      case 'STOCK_MOVEMENT':
+        return renderList([
+          `Product: ${details.productName || 'Unknown'}`,
+          `Movement type: ${details.movementType || 'transfer'}`,
+          `Quantity: ${details.quantity || 0} units`,
+          details.fromLocation ? `From: ${details.fromLocation}` : null,
+          details.toLocation ? `To: ${details.toLocation}` : null,
+          details.referenceNumber ? `Reference: ${details.referenceNumber}` : null,
+          details.notes ? `Notes: ${details.notes}` : null,
+        ].filter(Boolean));
+
+      case 'SALE_HELD':
+      case 'SALE_RESUMED':
+        return renderList([
+          details.transaction_id ? `Transaction: ${details.transaction_id}` : null,
+          details.itemCount ? `Items: ${details.itemCount}` : null,
+          details.total ? `Total: ${formatCurrency(details.total)}` : null,
+          details.customerName ? `Customer: ${details.customerName}` : null,
+        ].filter(Boolean));
+
+      case 'PAYMENT_ADDED':
+        return renderList([
+          details.transaction_id ? `Transaction: ${details.transaction_id}` : null,
+          `Amount: ${formatCurrency(details.amount)}`,
+          details.payment_method ? `Method: ${details.payment_method}` : null,
+          details.balance_due !== undefined ? `Balance remaining: ${formatCurrency(details.balance_due)}` : null,
+          details.new_status ? `New status: ${humanizeKey(details.new_status)}` : null,
+        ].filter(Boolean));
+
+      case 'REFUND_ISSUED':
+        return renderList([
+          details.transaction_id ? `Transaction: ${details.transaction_id}` : null,
+          details.refund_id ? `Refund ID: ${details.refund_id}` : null,
+          `Total refunded: ${formatCurrency(details.total_amount)}`,
+          details.reason ? `Reason: ${details.reason}` : null,
+          details.items_count !== undefined ? `Line items: ${details.items_count}` : null,
+          details.return_to_stock_count !== undefined ? `Returned to stock: ${details.return_to_stock_count}` : null,
+        ].filter(Boolean));
+
+      case 'ADMIN_OVERRIDE':
+        return renderList([
+          details.context ? `Context: ${details.context}` : null,
+          details.triggered_by_user_name ? `Triggered by: ${details.triggered_by_user_name}` : null,
+          details.verified_admin_name ? `Approved by: ${details.verified_admin_name}` : null,
+        ].filter(Boolean));
 
       case 'DELETE_PRODUCT':
         return renderList([
@@ -230,12 +342,16 @@ export const formatDetailsForModal = (log) => {
       case 'STOCK_OUT':
       case 'STOCK_ADJUSTMENT': {
         const verb = action === 'STOCK_IN' ? 'Added' : action === 'STOCK_OUT' ? 'Removed' : 'Adjusted by';
+        const qBefore = details.before?.quantity ?? details.previousQuantity ?? details.quantityBefore;
+        const qAfter = details.after?.quantity ?? details.newQuantity ?? details.quantityAfter;
         return renderList([
           `Product: ${details.productName || details.product_name || details.name || 'Unknown'}`,
           `${verb}: ${Math.abs(details.quantityChange || details.quantity || details.quantity_changed || details.difference || 0)} units`,
-          details.previousQuantity !== undefined ? `Previous stock: ${details.previousQuantity}` : null,
-          details.newQuantity !== undefined ? `New stock: ${details.newQuantity}` : null,
+          qBefore !== undefined ? `Previous stock: ${qBefore}` : null,
+          qAfter !== undefined ? `New stock: ${qAfter}` : null,
+          details.adjustmentType ? `Type: ${humanizeKey(details.adjustmentType)}` : null,
           details.reason ? `Reason: ${details.reason}` : null,
+          details.notes ? `Notes: ${details.notes}` : null,
           details.reference_number ? `Reference: ${details.reference_number}` : null,
         ].filter(Boolean));
       }

@@ -15,8 +15,20 @@ import { Line, Bar, Pie, Doughnut } from 'react-chartjs-2';
 import { transactionService, productService } from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { formatCurrency } from '../../utils/formatters';
-import { CalendarIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon, ShoppingBagIcon, CurrencyDollarIcon, ChartBarIcon } from '@heroicons/react/24/outline';
+import {
+  CalendarIcon,
+  ArrowTrendingUpIcon,
+  ArrowTrendingDownIcon,
+  ShoppingBagIcon,
+  CurrencyDollarIcon,
+  ChartBarIcon,
+  BanknotesIcon,
+  ClockIcon,
+  MagnifyingGlassIcon,
+  CubeIcon,
+} from '@heroicons/react/24/outline';
 import { toast } from 'react-hot-toast';
+import ProductHistoryDrawer from '../Inventory/ProductHistoryDrawer';
 
 ChartJS.register(
   CategoryScale,
@@ -64,10 +76,53 @@ const StatisticalReportsScreen = () => {
     yearly: false
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [allProducts, setAllProducts] = useState([]);
+  const [inventoryValue, setInventoryValue] = useState(null);
+  const [productSearch, setProductSearch] = useState('');
+  const [historyProduct, setHistoryProduct] = useState(null);
 
   useEffect(() => {
     loadAnalyticsData();
   }, [selectedPeriod]);
+
+  const computeInventoryValue = (products) => {
+    let totalInventoryValue = 0;
+    let totalRetailValue = 0;
+    const byCategory = {};
+    for (const p of products) {
+      const qty = Number(p.quantity) || 0;
+      const cost = Number(p.cost) || 0;
+      const price = Number(p.price) || 0;
+      const costVal = qty * cost;
+      const retailVal = qty * price;
+      totalInventoryValue += costVal;
+      totalRetailValue += retailVal;
+      const cat = p.category_name || p.category || 'Uncategorized';
+      if (!byCategory[cat]) byCategory[cat] = { category: cat, items: 0, units: 0, costValue: 0, retailValue: 0 };
+      byCategory[cat].items += 1;
+      byCategory[cat].units += qty;
+      byCategory[cat].costValue += costVal;
+      byCategory[cat].retailValue += retailVal;
+    }
+    const potentialProfit = totalRetailValue - totalInventoryValue;
+    const potentialMarginPct = totalRetailValue > 0 ? (potentialProfit / totalRetailValue) * 100 : 0;
+    const categories = Object.values(byCategory)
+      .map(c => ({
+        ...c,
+        profit: c.retailValue - c.costValue,
+        margin: c.retailValue > 0 ? ((c.retailValue - c.costValue) / c.retailValue) * 100 : 0,
+      }))
+      .sort((a, b) => b.retailValue - a.retailValue);
+    return {
+      totalProducts: products.length,
+      totalUnits: products.reduce((s, p) => s + (Number(p.quantity) || 0), 0),
+      totalInventoryValue,
+      totalRetailValue,
+      potentialProfit,
+      potentialMarginPct,
+      categories,
+    };
+  };
 
   const loadAnalyticsData = async () => {
     try {
@@ -80,6 +135,10 @@ const StatisticalReportsScreen = () => {
       ]);
 
       setTransactions(transactionsData || []);
+
+      const productList = Array.isArray(productsData) ? productsData : (productsData?.rows || []);
+      setAllProducts(productList);
+      setInventoryValue(computeInventoryValue(productList));
 
       // Process analytics data
       processAnalyticsData(transactionsData || [], productsData || []);
@@ -737,6 +796,190 @@ const StatisticalReportsScreen = () => {
           </div>
         </div>
       </div>
+
+      {/* Inventory Value */}
+      {inventoryValue && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <BanknotesIcon className={`h-5 w-5 ${colors.text.secondary}`} />
+            <h2 className={`text-lg font-semibold ${colors.text.primary}`}>Inventory Value</h2>
+          </div>
+          <div className={`${colors.card.primary} rounded-lg shadow border ${colors.border.primary} p-5`}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50">
+                <div className="p-3 rounded-xl bg-slate-200 dark:bg-slate-700">
+                  <BanknotesIcon className="h-6 w-6 text-slate-600 dark:text-slate-300" />
+                </div>
+                <div>
+                  <p className={`text-xs font-medium uppercase tracking-wider ${colors.text.secondary}`}>Inventory Cost Value</p>
+                  <p className={`text-xl font-bold ${colors.text.primary}`}>{formatCurrency(inventoryValue.totalInventoryValue)}</p>
+                  <p className={`text-xs ${colors.text.tertiary} mt-0.5`}>{inventoryValue.totalProducts} products · {inventoryValue.totalUnits} units</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20">
+                <div className="p-3 rounded-xl bg-blue-100 dark:bg-blue-900/40">
+                  <CurrencyDollarIcon className="h-6 w-6 text-blue-600 dark:text-blue-300" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-blue-700 dark:text-blue-300">Retail Value</p>
+                  <p className={`text-xl font-bold ${colors.text.primary}`}>{formatCurrency(inventoryValue.totalRetailValue)}</p>
+                  <p className={`text-xs ${colors.text.tertiary} mt-0.5`}>At listed prices</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 p-4 rounded-xl bg-emerald-50 dark:bg-emerald-900/20">
+                <div className="p-3 rounded-xl bg-emerald-100 dark:bg-emerald-900/40">
+                  <ArrowTrendingUpIcon className="h-6 w-6 text-emerald-600 dark:text-emerald-300" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-emerald-700 dark:text-emerald-300">Potential Profit</p>
+                  <p className={`text-xl font-bold ${colors.text.primary}`}>
+                    {formatCurrency(inventoryValue.potentialProfit)}
+                    <span className={`ml-2 text-sm font-semibold ${inventoryValue.potentialMarginPct >= 25 ? 'text-emerald-600 dark:text-emerald-400' : inventoryValue.potentialMarginPct >= 10 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
+                      ({inventoryValue.potentialMarginPct.toFixed(1)}%)
+                    </span>
+                  </p>
+                  <p className={`text-xs ${colors.text.tertiary} mt-0.5`}>If entire stock sells at current prices</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className={`${colors.card.primary} rounded-lg shadow border ${colors.border.primary} overflow-hidden`}>
+            <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
+              <h3 className={`text-base font-semibold ${colors.text.primary}`}>Value by Category</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className={`${colors.bg.secondary} ${colors.text.secondary}`}>
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">Category</th>
+                    <th className="px-4 py-3 text-right font-medium">Products</th>
+                    <th className="px-4 py-3 text-right font-medium">Units</th>
+                    <th className="px-4 py-3 text-right font-medium">Cost Value</th>
+                    <th className="px-4 py-3 text-right font-medium">Retail Value</th>
+                    <th className="px-4 py-3 text-right font-medium">Profit</th>
+                    <th className="px-4 py-3 text-right font-medium">Margin</th>
+                  </tr>
+                </thead>
+                <tbody className={`divide-y ${colors.border.primary}`}>
+                  {inventoryValue.categories.map(c => (
+                    <tr key={c.category}>
+                      <td className={`px-4 py-3 ${colors.text.primary} font-medium`}>{c.category}</td>
+                      <td className={`px-4 py-3 text-right ${colors.text.secondary}`}>{c.items}</td>
+                      <td className={`px-4 py-3 text-right ${colors.text.secondary}`}>{c.units}</td>
+                      <td className={`px-4 py-3 text-right ${colors.text.secondary}`}>{formatCurrency(c.costValue)}</td>
+                      <td className={`px-4 py-3 text-right ${colors.text.secondary}`}>{formatCurrency(c.retailValue)}</td>
+                      <td className={`px-4 py-3 text-right font-medium ${colors.text.primary}`}>{formatCurrency(c.profit)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <span className={`font-semibold ${c.margin >= 25 ? 'text-emerald-600 dark:text-emerald-400' : c.margin >= 10 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
+                          {c.margin.toFixed(1)}%
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {inventoryValue.categories.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className={`px-4 py-10 text-center ${colors.text.secondary}`}>
+                        No products to summarize.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Product History */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <ClockIcon className={`h-5 w-5 ${colors.text.secondary}`} />
+          <h2 className={`text-lg font-semibold ${colors.text.primary}`}>Product History</h2>
+        </div>
+        <div className={`${colors.card.primary} rounded-lg shadow border ${colors.border.primary} p-5`}>
+          <p className={`text-sm ${colors.text.secondary} mb-4`}>
+            Select a product to view its full timeline of edits, stock adjustments, movements, and sales.
+          </p>
+          <div className="relative">
+            <MagnifyingGlassIcon className={`absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 ${colors.text.tertiary}`} />
+            <input
+              type="text"
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              placeholder="Search product by name, barcode, or category…"
+              className={`w-full pl-10 pr-4 py-2.5 rounded-lg border ${colors.input.primary}`}
+            />
+          </div>
+        </div>
+        <div className={`${colors.card.primary} rounded-lg shadow border ${colors.border.primary} overflow-hidden`}>
+          <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className={`${colors.bg.secondary} ${colors.text.secondary} sticky top-0`}>
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium">Product</th>
+                  <th className="px-4 py-3 text-left font-medium">Category</th>
+                  <th className="px-4 py-3 text-right font-medium">Stock</th>
+                  <th className="px-4 py-3 text-right font-medium">Price</th>
+                  <th className="px-4 py-3 text-right font-medium"></th>
+                </tr>
+              </thead>
+              <tbody className={`divide-y ${colors.border.primary}`}>
+                {(() => {
+                  const q = productSearch.trim().toLowerCase();
+                  const filtered = q
+                    ? allProducts.filter(p =>
+                        (p.name || '').toLowerCase().includes(q) ||
+                        (p.barcode || '').toLowerCase().includes(q) ||
+                        (p.category_name || p.category || '').toLowerCase().includes(q)
+                      )
+                    : allProducts;
+                  if (filtered.length === 0) {
+                    return (
+                      <tr>
+                        <td colSpan={5} className={`px-4 py-10 text-center ${colors.text.secondary}`}>
+                          {allProducts.length === 0 ? 'No products loaded.' : 'No products match your search.'}
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return filtered.map(p => (
+                    <tr key={p.id} className={`hover:${colors.bg.secondary}`}>
+                      <td className={`px-4 py-3 ${colors.text.primary}`}>
+                        <div className="flex items-center gap-2">
+                          <CubeIcon className={`h-4 w-4 ${colors.text.tertiary}`} />
+                          <div>
+                            <div className="font-medium">{p.name}</div>
+                            {p.barcode && <div className={`text-xs ${colors.text.tertiary}`}>{p.barcode}</div>}
+                          </div>
+                        </div>
+                      </td>
+                      <td className={`px-4 py-3 ${colors.text.secondary}`}>{p.category_name || p.category || 'Uncategorized'}</td>
+                      <td className={`px-4 py-3 text-right ${colors.text.secondary}`}>{p.quantity}</td>
+                      <td className={`px-4 py-3 text-right ${colors.text.secondary}`}>{formatCurrency(p.price)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setHistoryProduct(p)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-xs font-medium"
+                        >
+                          <ClockIcon className="h-4 w-4" /> View History
+                        </button>
+                      </td>
+                    </tr>
+                  ));
+                })()}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <ProductHistoryDrawer
+        isOpen={!!historyProduct}
+        onClose={() => setHistoryProduct(null)}
+        product={historyProduct}
+      />
     </div>
   );
 };

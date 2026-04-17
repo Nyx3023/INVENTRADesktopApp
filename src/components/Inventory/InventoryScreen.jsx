@@ -32,6 +32,7 @@ import {
 import ProductModal from './ProductModal';
 import InventoryAuditModal from './InventoryAuditModal';
 import ImportProductsModal from './ImportProductsModal';
+import EmptyState from '../common/EmptyState';
 import { productService, categoryService, auditService, stockAdjustmentService } from '../../services/api';
 import { exportProductsToExcel } from '../../utils/exportUtils';
 import { useAuth, usePermissions } from '../../context/AuthContext';
@@ -724,6 +725,18 @@ const InventoryScreen = () => {
     return { totalProducts, lowStock, outOfStock, inStock };
   };
 
+  // Per-product margin helper. Returns { amount, percent, tone } where tone is color-code.
+  const getMargin = (product) => {
+    const price = Number(product?.price) || 0;
+    const cost = Number(product?.cost) || 0;
+    const amount = price - cost;
+    const percent = price > 0 ? (amount / price) * 100 : 0;
+    let tone = 'emerald';
+    if (percent < 10) tone = 'red';
+    else if (percent < 25) tone = 'amber';
+    return { amount, percent, tone };
+  };
+
   const stats = getInventoryStats();
 
   // Pagination calculations
@@ -865,6 +878,12 @@ const InventoryScreen = () => {
   const ProductCard = ({ product }) => {
     const stockInfo = getStockStatus(product);
     const isSelected = selectedProducts.includes(product.id);
+    const margin = getMargin(product);
+    const marginToneClass = margin.tone === 'emerald'
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : margin.tone === 'amber'
+        ? 'text-amber-600 dark:text-amber-400'
+        : 'text-red-600 dark:text-red-400';
 
     return (
       <div
@@ -938,6 +957,11 @@ const InventoryScreen = () => {
             <div>
               <p className={`text-sm ${colors.text.secondary} mb-1`}>Price</p>
               <p className={`font-semibold ${colors.text.primary}`}>{formatCurrency(parseFloat(product.price || 0))}</p>
+              {Number(product.cost) > 0 && (
+                <p className={`text-xs mt-0.5 font-medium ${marginToneClass}`} title={`Cost: ${formatCurrency(Number(product.cost))}`}>
+                  {margin.percent.toFixed(1)}% margin
+                </p>
+              )}
             </div>
             <div>
               <p className={`text-sm ${colors.text.secondary} mb-1`}>Stock</p>
@@ -1032,6 +1056,9 @@ const InventoryScreen = () => {
                 Price
               </th>
               <th className={`px-6 py-4 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>
+                Margin
+              </th>
+              <th className={`px-6 py-4 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>
                 Stock
               </th>
               <th className={`px-6 py-4 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>
@@ -1046,6 +1073,12 @@ const InventoryScreen = () => {
             {paginatedProducts.map((product) => {
               const stockInfo = getStockStatus(product);
               const isSelected = selectedProducts.includes(product.id);
+              const margin = getMargin(product);
+              const marginToneClass = margin.tone === 'emerald'
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : margin.tone === 'amber'
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-red-600 dark:text-red-400';
               return (
                 <tr key={product.id} className={`hover:${colors.bg.secondary} transition-colors ${isSelected ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}>
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -1089,6 +1122,20 @@ const InventoryScreen = () => {
                   </td>
                   <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${colors.text.primary}`}>
                     {formatCurrency(parseFloat(product.price || 0))}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    {Number(product.cost) > 0 ? (
+                      <div className="flex flex-col">
+                        <span className={`font-semibold ${marginToneClass}`}>
+                          {margin.percent.toFixed(1)}%
+                        </span>
+                        <span className={`text-xs ${colors.text.tertiary}`}>
+                          {formatCurrency(margin.amount)}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className={colors.text.tertiary}>—</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <span className={stockInfo.color}>
@@ -1502,24 +1549,27 @@ const InventoryScreen = () => {
 
       {/* Content */}
       {filteredProducts.length === 0 ? (
-        <div className={`${colors.card.primary} rounded-2xl shadow-sm border ${colors.border.primary} p-12 text-center`}>
-          <CubeIcon className={`h-16 w-16 mx-auto mb-4 ${colors.text.tertiary}`} />
-          <h3 className={`text-xl font-semibold mb-2 ${colors.text.primary}`}>No products found</h3>
-          <p className={`mb-6 ${colors.text.secondary}`}>
-            {searchTerm || filters.category || filters.stockStatus
-              ? 'Try adjusting your search or filters'
-              : 'Get started by adding your first product'
+        <div className={`${colors.card.primary} rounded-2xl shadow-sm border ${colors.border.primary}`}>
+          <EmptyState
+            icon={CubeIcon}
+            title="No products found"
+            description={
+              searchTerm || filters.category || filters.stockStatus
+                ? 'Try adjusting your search or filters.'
+                : 'Get started by adding your first product.'
             }
-          </p>
-          {hasPermission('add_product') && (
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="px-6 py-3 bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-600 rounded-xl font-medium transition-all duration-200 flex items-center space-x-2 mx-auto"
-            >
-              <PlusIcon className="h-5 w-5" />
-              <span>Add Product</span>
-            </button>
-          )}
+            action={
+              hasPermission('add_product') && !(searchTerm || filters.category || filters.stockStatus) ? (
+                <button
+                  onClick={() => setIsModalOpen(true)}
+                  className="px-6 py-3 bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-600 rounded-xl font-medium transition-all duration-200 flex items-center space-x-2"
+                >
+                  <PlusIcon className="h-5 w-5" />
+                  <span>Add Product</span>
+                </button>
+              ) : null
+            }
+          />
         </div>
       ) : (
         <div className="flex gap-4">

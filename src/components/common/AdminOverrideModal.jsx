@@ -3,8 +3,9 @@ import { useTheme } from '../../context/ThemeContext';
 import { toast } from 'react-hot-toast';
 import { EyeIcon, EyeSlashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import ModalPortal from './ModalPortal';
+import { adminOverrideService } from '../../services/api';
 
-const AdminOverrideModal = ({ isOpen, onClose, onSuccess, actionDescription }) => {
+const AdminOverrideModal = ({ isOpen, onClose, onSuccess, actionDescription, context }) => {
     const { colors } = useTheme();
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -21,23 +22,21 @@ const AdminOverrideModal = ({ isOpen, onClose, onSuccess, actionDescription }) =
 
         setIsVerifying(true);
         try {
-            const response = await fetch('/api/verify-admin-password', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password }),
+            const data = await adminOverrideService.verify({
+                password,
+                context: context || actionDescription || 'unspecified',
             });
-            const data = await response.json();
 
             if (data.success) {
                 toast.success(`Admin Override Approved by ${data.user.name}`);
-                onSuccess();
+                onSuccess(data);
                 onClose();
             } else {
                 toast.error(data.message || 'Invalid admin password');
             }
         } catch (error) {
             console.error('Verify error:', error);
-            toast.error('Failed to verify admin password');
+            toast.error(error.message || 'Failed to verify admin password');
         } finally {
             setIsVerifying(false);
             setPassword('');

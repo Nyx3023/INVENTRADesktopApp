@@ -9,7 +9,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { db, execute, getConnection, withTransaction } from './db-helpers.js';
+import { db, execute, getConnection, withTransaction, diffFields } from './db-helpers.js';
 import { initializeDatabase } from '../database/sqlite-schema.js';
 import AdmZip from 'adm-zip';
 
@@ -69,22 +69,28 @@ const ACTIVITY_ACTIONS = {
   CREATE_PRODUCT: 'CREATE_PRODUCT',
   UPDATE_PRODUCT: 'UPDATE_PRODUCT',
   DELETE_PRODUCT: 'DELETE_PRODUCT',
+  RESTORE_PRODUCT: 'RESTORE_PRODUCT',
+  PERMANENT_DELETE_PRODUCT: 'PERMANENT_DELETE_PRODUCT',
+  PRODUCT_PRICE_CHANGE: 'PRODUCT_PRICE_CHANGE',
   STOCK_IN: 'STOCK_IN',
   STOCK_OUT: 'STOCK_OUT',
   STOCK_ADJUSTMENT: 'STOCK_ADJUSTMENT',
+  STOCK_MOVEMENT: 'STOCK_MOVEMENT',
   CREATE_SALE: 'CREATE_SALE',
   VOID_SALE: 'VOID_SALE',
   ARCHIVE_TRANSACTION: 'ARCHIVE_TRANSACTION',
   RESTORE_TRANSACTION: 'RESTORE_TRANSACTION',
   DELETE_TRANSACTION: 'DELETE_TRANSACTION',
+  SALE_HELD: 'SALE_HELD',
+  SALE_RESUMED: 'SALE_RESUMED',
+  PAYMENT_ADDED: 'PAYMENT_ADDED',
+  REFUND_ISSUED: 'REFUND_ISSUED',
+  ADMIN_OVERRIDE: 'ADMIN_OVERRIDE',
   CREATE_CATEGORY: 'CREATE_CATEGORY',
   DELETE_CATEGORY: 'DELETE_CATEGORY',
   CREATE_SUPPLIER: 'CREATE_SUPPLIER',
   UPDATE_SUPPLIER: 'UPDATE_SUPPLIER',
   DELETE_SUPPLIER: 'DELETE_SUPPLIER',
-  CREATE_PURCHASE_ORDER: 'CREATE_PURCHASE_ORDER',
-  RECEIVE_PURCHASE_ORDER: 'RECEIVE_PURCHASE_ORDER',
-  CANCEL_PURCHASE_ORDER: 'CANCEL_PURCHASE_ORDER',
   CREATE_PURCHASE_ORDER: 'CREATE_PURCHASE_ORDER',
   RECEIVE_PURCHASE_ORDER: 'RECEIVE_PURCHASE_ORDER',
   CANCEL_PURCHASE_ORDER: 'CANCEL_PURCHASE_ORDER',
@@ -359,7 +365,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.post('/api/verify-admin-password', async (req, res) => {
   try {
-    const { password } = req.body;
+    const { password, context, triggeredByUserId, triggeredByUserName, triggeredByUserEmail } = req.body;
     if (!password) {
       return res.status(400).json({ success: false, message: 'Password is required' });
     }
@@ -377,8 +383,16 @@ app.post('/api/verify-admin-password', async (req, res) => {
           userId: admin.id,
           userName: admin.name,
           userEmail: admin.email,
-          action: 'ADMIN_OVERRIDE_VERIFIED',
-          details: { via: 'AdminOverrideModal' },
+          action: ACTIVITY_ACTIONS.ADMIN_OVERRIDE,
+          details: {
+            via: 'AdminOverrideModal',
+            context: context || 'unspecified',
+            triggered_by_user_id: triggeredByUserId || null,
+            triggered_by_user_name: triggeredByUserName || null,
+            triggered_by_user_email: triggeredByUserEmail || null,
+            verified_admin_id: admin.id,
+            verified_admin_name: admin.name,
+          },
           ipAddress: req.ip,
         });
         return res.json({ success: true, user: { id: admin.id, name: admin.name, email: admin.email } });
@@ -388,6 +402,68 @@ app.post('/api/verify-admin-password', async (req, res) => {
     return res.status(401).json({ success: false, message: 'Invalid admin password' });
   } catch (error) {
     console.error('Verify admin password error:', error);
+    res.status(500).json({ success: false, message: 'An error occurred during verification' });
+  }
+});
+
+// Preferred endpoint for admin override (alias of /api/verify-admin-password with context-aware logging)
+app.post('/api/auth/verify-admin', async (req, res) => {
+  try {
+    const { password, context, triggeredByUserId, triggeredByUserName, triggeredByUserEmail } = req.body || {};
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Password is required' });
+    }
+
+    const [admins] = execute(
+      'SELECT id, name, email, password_hash FROM users WHERE role = ?',
+      ['admin']
+    );
+
+    for (const admin of admins) {
+      const isValid = await bcrypt.compare(password, admin.password_hash);
+      if (isValid) {
+        logActivity({
+          userId: admin.id,
+          userName: admin.name,
+          userEmail: admin.email,
+          action: ACTIVITY_ACTIONS.ADMIN_OVERRIDE,
+          details: {
+            via: 'AdminOverrideModal',
+            context: context || 'unspecified',
+            triggered_by_user_id: triggeredByUserId || null,
+            triggered_by_user_name: triggeredByUserName || null,
+            triggered_by_user_email: triggeredByUserEmail || null,
+            verified_admin_id: admin.id,
+            verified_admin_name: admin.name,
+          },
+          ipAddress: req.ip,
+        });
+        return res.json({
+          success: true,
+          user: { id: admin.id, name: admin.name, email: admin.email },
+          context: context || null,
+        });
+      }
+    }
+
+    // Also log failed attempts for security visibility
+    logActivity({
+      userId: triggeredByUserId || null,
+      userName: triggeredByUserName || null,
+      userEmail: triggeredByUserEmail || null,
+      action: ACTIVITY_ACTIONS.ADMIN_OVERRIDE,
+      details: {
+        via: 'AdminOverrideModal',
+        context: context || 'unspecified',
+        result: 'failed',
+        reason: 'Invalid admin password',
+      },
+      ipAddress: req.ip,
+    });
+
+    return res.status(401).json({ success: false, message: 'Invalid admin password' });
+  } catch (error) {
+    console.error('verify-admin error:', error);
     res.status(500).json({ success: false, message: 'An error occurred during verification' });
   }
 });
@@ -750,12 +826,88 @@ app.post('/api/setup/reset', async (req, res) => {
 // Get all products
 app.get('/api/products', async (req, res) => {
   try {
-    const [rows] = execute(
+    const {
+      limit,
+      offset,
+      search,
+      categoryName,
+      stockStatus,
+      sort,
+      includeDeleted,
+    } = req.query;
+
+    const filters = [];
+    const params = [];
+
+    // deleted_at handling
+    if (includeDeleted === 'only') {
+      filters.push('deleted_at IS NOT NULL');
+    } else if (includeDeleted === 'true' || includeDeleted === '1') {
+      // include both
+    } else {
+      filters.push('deleted_at IS NULL');
+    }
+
+    if (search && String(search).trim()) {
+      const like = `%${String(search).trim()}%`;
+      filters.push('(name LIKE ? OR barcode LIKE ? OR description LIKE ?)');
+      params.push(like, like, like);
+    }
+
+    if (categoryName && String(categoryName).trim()) {
+      filters.push('category_name = ?');
+      params.push(String(categoryName).trim());
+    }
+
+    if (stockStatus) {
+      if (stockStatus === 'out') {
+        filters.push('quantity <= 0');
+      } else if (stockStatus === 'low') {
+        filters.push('quantity > 0 AND quantity <= low_stock_threshold');
+      } else if (stockStatus === 'ok') {
+        filters.push('quantity > low_stock_threshold');
+      } else if (stockStatus === 'available') {
+        filters.push("status = 'available'");
+      } else if (stockStatus === 'unavailable') {
+        filters.push("status = 'unavailable'");
+      }
+    }
+
+    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+
+    let orderBy = 'ORDER BY name ASC';
+    const sortMap = {
+      name_asc: 'ORDER BY name ASC',
+      name_desc: 'ORDER BY name DESC',
+      price_asc: 'ORDER BY price ASC',
+      price_desc: 'ORDER BY price DESC',
+      quantity_asc: 'ORDER BY quantity ASC',
+      quantity_desc: 'ORDER BY quantity DESC',
+      created_desc: 'ORDER BY created_at DESC',
+      created_asc: 'ORDER BY created_at ASC',
+      deleted_desc: 'ORDER BY deleted_at DESC',
+    };
+    if (sort && sortMap[sort]) orderBy = sortMap[sort];
+
+    const baseSelect =
       'SELECT id, name, description, category_name, price, cost, ' +
-      'quantity, barcode, image_url as imageUrl, status ' +
-      'FROM products WHERE deleted_at IS NULL'
-    );
-    console.log('Products fetched:', rows);
+      'quantity, low_stock_threshold, reorder_point, barcode, image_url as imageUrl, status, deleted_at, created_at, updated_at ' +
+      `FROM products ${whereClause} ${orderBy}`;
+
+    const hasPagination = limit !== undefined || offset !== undefined;
+
+    if (hasPagination) {
+      const limitN = Math.min(Math.max(parseInt(limit || '50', 10) || 50, 1), 500);
+      const offsetN = Math.max(parseInt(offset || '0', 10) || 0, 0);
+      const [rows] = execute(`${baseSelect} LIMIT ? OFFSET ?`, [...params, limitN, offsetN]);
+      const [[{ total }]] = execute(
+        `SELECT COUNT(*) AS total FROM products ${whereClause}`,
+        params
+      );
+      return res.json({ rows, total: total || 0 });
+    }
+
+    const [rows] = execute(baseSelect, params);
     res.json(rows);
   } catch (error) {
     console.error('Error fetching products:', error);
@@ -922,6 +1074,15 @@ app.put('/api/products/:id', async (req, res) => {
     const product = req.body;
     console.log('Updating product:', id, product);
 
+    // Snapshot BEFORE state for audit diff
+    const [beforeRows] = execute(
+      `SELECT name, description, category_name, price, cost, quantity,
+              low_stock_threshold, reorder_point, barcode, image_url, status
+       FROM products WHERE id = ? AND deleted_at IS NULL`,
+      [id]
+    );
+    const beforeState = beforeRows[0] || null;
+
     // Validate barcode uniqueness only if barcode is provided and changed
     const barcodeToCheck = product.barcode && typeof product.barcode === 'string' && product.barcode.trim() !== ''
       ? product.barcode.trim()
@@ -993,9 +1154,17 @@ app.put('/api/products/:id', async (req, res) => {
       // Enqueue outbox for sync
       enqueueOutbox('product', id, 'update', { id, ...updateData });
 
-      // Log activity - non-blocking
+      // Log activity with before/after diff
       try {
         const user = getUserFromRequest(req);
+        const whitelist = [
+          'name', 'description', 'category_name', 'price', 'cost',
+          'quantity', 'barcode', 'image_url', 'status',
+        ];
+        const diff = beforeState
+          ? diffFields(beforeState, updateData, whitelist)
+          : { before: {}, after: updateData, changed_fields: whitelist };
+
         logActivity({
           userId: user.id,
           userName: user.name,
@@ -1006,12 +1175,31 @@ app.put('/api/products/:id', async (req, res) => {
           details: {
             message: `Updated product: ${updateData.name}`,
             productName: updateData.name,
-            category: updateData.category_name,
-            price: updateData.price,
-            quantity: updateData.quantity
+            before: diff.before,
+            after: diff.after,
+            changed_fields: diff.changed_fields,
           },
           ipAddress: req.ip || req.connection?.remoteAddress || null
         });
+
+        // Dedicated price-change event for easy filtering/reports
+        if (beforeState && diff.changed_fields.includes('price')) {
+          logActivity({
+            userId: user.id,
+            userName: user.name,
+            userEmail: user.email,
+            action: ACTIVITY_ACTIONS.PRODUCT_PRICE_CHANGE,
+            entityType: 'product',
+            entityId: id,
+            details: {
+              productName: updateData.name,
+              old_price: Number(beforeState.price) || 0,
+              new_price: Number(updateData.price) || 0,
+              delta: (Number(updateData.price) || 0) - (Number(beforeState.price) || 0),
+            },
+            ipAddress: req.ip || req.connection?.remoteAddress || null,
+          });
+        }
       } catch (logError) {
         console.warn('Failed to log activity for product update:', logError);
       }
@@ -1057,9 +1245,11 @@ app.delete('/api/products/:id', async (req, res) => {
   console.log('Soft deleting product:', id);
 
   try {
-    // Check if product exists and is not already deleted
+    // Check if product exists and is not already deleted + capture BEFORE snapshot
     const [productRows] = execute(
-      'SELECT id, name, deleted_at FROM products WHERE id = ?',
+      `SELECT id, name, description, category_name, price, cost, quantity,
+              low_stock_threshold, reorder_point, barcode, image_url, status, deleted_at
+       FROM products WHERE id = ?`,
       [id]
     );
 
@@ -1072,6 +1262,8 @@ app.delete('/api/products/:id', async (req, res) => {
       console.log('Product already deleted:', id);
       return res.status(400).json({ error: 'Product is already deleted' });
     }
+
+    const beforeState = productRows[0];
 
     // Soft delete the product by setting deleted_at timestamp
     const [result] = execute(
@@ -1097,7 +1289,7 @@ app.delete('/api/products/:id', async (req, res) => {
       // Don't fail the delete if outbox fails
     }
 
-    // Log activity - non-blocking
+    // Log activity with full before snapshot for potential restore/audit
     try {
       const user = getUserFromRequest(req);
       logActivity({
@@ -1108,9 +1300,19 @@ app.delete('/api/products/:id', async (req, res) => {
         entityType: 'product',
         entityId: id,
         details: {
-          message: `Deleted product: ${productRows[0].name}`,
-          productName: productRows[0].name,
-          productId: id
+          message: `Deleted product: ${beforeState.name}`,
+          productName: beforeState.name,
+          productId: id,
+          before: {
+            name: beforeState.name,
+            description: beforeState.description,
+            category_name: beforeState.category_name,
+            price: beforeState.price,
+            cost: beforeState.cost,
+            quantity: beforeState.quantity,
+            barcode: beforeState.barcode,
+            status: beforeState.status,
+          },
         },
         ipAddress: req.ip || req.connection?.remoteAddress || null
       });
@@ -1143,6 +1345,257 @@ app.delete('/api/products/:id', async (req, res) => {
       details: error.message,
       code: error.code
     });
+  }
+});
+
+// Restore a soft-deleted product
+// Product history: unified timeline of activity logs, stock adjustments, stock movements,
+// and sales line-items for a specific product.
+app.get('/api/products/:id/history', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const typesParam = (req.query.types || '').toString().trim();
+    const allowedTypes = new Set(['activity', 'adjustment', 'movement', 'sale']);
+    const selectedTypes = typesParam
+      ? typesParam.split(',').map(s => s.trim()).filter(t => allowedTypes.has(t))
+      : Array.from(allowedTypes);
+
+    const events = [];
+
+    if (selectedTypes.includes('activity')) {
+      const [logs] = execute(
+        `SELECT id, user_id, user_name, user_email, action, entity_type, entity_id,
+                details, ip_address, created_at
+         FROM activity_logs
+         WHERE entity_type = 'product' AND entity_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [id, 500]
+      );
+      logs.forEach(l => {
+        let parsedDetails = null;
+        try { parsedDetails = l.details ? JSON.parse(l.details) : null; } catch { parsedDetails = l.details; }
+        events.push({
+          type: 'activity',
+          id: `activity-${l.id}`,
+          timestamp: l.created_at,
+          action: l.action,
+          userId: l.user_id,
+          userName: l.user_name,
+          userEmail: l.user_email,
+          details: parsedDetails,
+        });
+      });
+    }
+
+    if (selectedTypes.includes('adjustment')) {
+      const [adj] = execute(
+        `SELECT id, adjustment_type, quantity_before, quantity_after, quantity_change,
+                reason, notes, adjusted_by, adjusted_by_id, created_at
+         FROM stock_adjustments
+         WHERE product_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [id, 500]
+      );
+      adj.forEach(a => {
+        events.push({
+          type: 'adjustment',
+          id: `adjustment-${a.id}`,
+          timestamp: a.created_at,
+          action: 'STOCK_ADJUSTMENT',
+          userId: a.adjusted_by_id,
+          userName: a.adjusted_by,
+          details: {
+            adjustmentType: a.adjustment_type,
+            quantityBefore: a.quantity_before,
+            quantityAfter: a.quantity_after,
+            quantityChange: a.quantity_change,
+            reason: a.reason,
+            notes: a.notes,
+          },
+        });
+      });
+    }
+
+    if (selectedTypes.includes('movement')) {
+      const [mov] = execute(
+        `SELECT id, movement_type, quantity, from_location, to_location,
+                reference_number, notes, performed_by, performed_by_id, created_at
+         FROM stock_movements
+         WHERE product_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [id, 500]
+      );
+      mov.forEach(m => {
+        events.push({
+          type: 'movement',
+          id: `movement-${m.id}`,
+          timestamp: m.created_at,
+          action: 'STOCK_MOVEMENT',
+          userId: m.performed_by_id,
+          userName: m.performed_by,
+          details: {
+            movementType: m.movement_type,
+            quantity: m.quantity,
+            fromLocation: m.from_location,
+            toLocation: m.to_location,
+            referenceNumber: m.reference_number,
+            notes: m.notes,
+          },
+        });
+      });
+    }
+
+    if (selectedTypes.includes('sale')) {
+      const [items] = execute(
+        `SELECT ti.id, ti.transaction_id, ti.quantity, ti.unit_price, ti.unit_cost,
+                ti.created_at, t.reference_number, t.user_name, t.user_id, t.payment_method, t.status
+         FROM transaction_items ti
+         JOIN transactions t ON t.id = ti.transaction_id
+         WHERE ti.product_id = ?
+         ORDER BY ti.created_at DESC
+         LIMIT ?`,
+        [id, 500]
+      );
+      items.forEach(it => {
+        const lineTotal = Number(it.unit_price || 0) * Number(it.quantity || 0);
+        const lineCost = Number(it.unit_cost || 0) * Number(it.quantity || 0);
+        events.push({
+          type: 'sale',
+          id: `sale-${it.id}`,
+          timestamp: it.created_at,
+          action: 'SALE_LINE',
+          userId: it.user_id,
+          userName: it.user_name,
+          details: {
+            transactionId: it.transaction_id,
+            referenceNumber: it.reference_number,
+            quantity: it.quantity,
+            unitPrice: it.unit_price,
+            unitCost: it.unit_cost,
+            lineTotal,
+            lineProfit: lineTotal - lineCost,
+            paymentMethod: it.payment_method,
+            status: it.status,
+          },
+        });
+      });
+    }
+
+    events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const total = events.length;
+    const paged = events.slice(offset, offset + limit);
+
+    res.json({ rows: paged, total });
+  } catch (error) {
+    console.error('Error fetching product history:', error);
+    res.status(500).json({ error: 'Failed to fetch product history', details: error.message });
+  }
+});
+
+app.post('/api/products/:id/restore', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [rows] = execute('SELECT id, name, deleted_at FROM products WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    if (!rows[0].deleted_at) {
+      return res.status(400).json({ error: 'Product is not deleted' });
+    }
+
+    execute('UPDATE products SET deleted_at = NULL WHERE id = ?', [id]);
+
+    try {
+      const user = getUserFromRequest(req);
+      logActivity({
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        action: ACTIVITY_ACTIONS.RESTORE_PRODUCT,
+        entityType: 'product',
+        entityId: id,
+        details: {
+          message: `Restored product: ${rows[0].name}`,
+          productName: rows[0].name,
+          productId: id,
+        },
+        ipAddress: req.ip,
+      });
+    } catch (e) {
+      console.warn('Failed to log activity for product restore:', e);
+    }
+
+    enqueueOutbox('product', id, 'restore', { id });
+
+    res.json({ success: true, id, name: rows[0].name });
+  } catch (error) {
+    console.error('Error restoring product:', error);
+    res.status(500).json({ error: 'Failed to restore product', details: error.message });
+  }
+});
+
+// Permanently delete a product (requires admin). Only allowed when currently soft-deleted.
+app.delete('/api/products/:id/permanent', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [rows] = execute(
+      `SELECT id, name, deleted_at FROM products WHERE id = ?`,
+      [id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    if (!rows[0].deleted_at) {
+      return res.status(400).json({ error: 'Product must be soft-deleted before permanent delete' });
+    }
+
+    // Check if referenced in transaction_items - if so, keep as soft-deleted instead of hard delete
+    const [[{ cnt }]] = execute(
+      'SELECT COUNT(*) AS cnt FROM transaction_items WHERE product_id = ?',
+      [id]
+    );
+
+    if (cnt > 0) {
+      return res.status(400).json({
+        error: 'Cannot permanently delete: product is referenced in past transactions',
+        code: 'PRODUCT_IN_USE',
+        referencedBy: cnt,
+      });
+    }
+
+    execute('DELETE FROM products WHERE id = ?', [id]);
+
+    try {
+      const user = getUserFromRequest(req);
+      logActivity({
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        action: ACTIVITY_ACTIONS.PERMANENT_DELETE_PRODUCT,
+        entityType: 'product',
+        entityId: id,
+        details: {
+          message: `Permanently deleted product: ${rows[0].name}`,
+          productName: rows[0].name,
+          productId: id,
+        },
+        ipAddress: req.ip,
+      });
+    } catch (e) {
+      console.warn('Failed to log activity for permanent delete:', e);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error permanently deleting product:', error);
+    res.status(500).json({ error: 'Failed to permanently delete product', details: error.message });
   }
 });
 
@@ -1815,7 +2268,8 @@ app.post('/api/stock-movements', async (req, res) => {
     );
 
     // Log activity - determine action based on movement type
-    const stockAction = (movementType === 'in' || movementType === 'stock_in') ? 'STOCK_IN' : 'STOCK_OUT';
+    const isInflow = movementType === 'in' || movementType === 'stock_in' || movementType === 'return';
+    const stockAction = isInflow ? ACTIVITY_ACTIONS.STOCK_IN : ACTIVITY_ACTIONS.STOCK_OUT;
     logActivity({
       userId: performedById,
       userName: performedBy,
@@ -1825,6 +2279,27 @@ app.post('/api/stock-movements', async (req, res) => {
       details: {
         productName: product.name,
         movementType,
+        movement_id: movementId,
+        quantity,
+        fromLocation,
+        toLocation,
+        referenceNumber,
+        notes,
+      },
+      ipAddress: req.ip,
+    });
+
+    // Also log a STOCK_MOVEMENT event for structured filtering
+    logActivity({
+      userId: performedById,
+      userName: performedBy,
+      action: ACTIVITY_ACTIONS.STOCK_MOVEMENT,
+      entityType: 'product',
+      entityId: productId,
+      details: {
+        productName: product.name,
+        movementType,
+        movement_id: movementId,
         quantity,
         fromLocation,
         toLocation,
@@ -2005,9 +2480,9 @@ app.post('/api/stock-adjustments', async (req, res) => {
       );
 
       // Log activity - use STOCK_IN/STOCK_OUT based on direction, or STOCK_ADJUSTMENT for corrections
-      let stockAction = 'STOCK_ADJUSTMENT';
-      if (quantityChange > 0) stockAction = 'STOCK_IN';
-      else if (quantityChange < 0) stockAction = 'STOCK_OUT';
+      let stockAction = ACTIVITY_ACTIONS.STOCK_ADJUSTMENT;
+      if (quantityChange > 0) stockAction = ACTIVITY_ACTIONS.STOCK_IN;
+      else if (quantityChange < 0) stockAction = ACTIVITY_ACTIONS.STOCK_OUT;
       logActivity({
         userId: adjustedById,
         userName: adjustedBy,
@@ -2017,10 +2492,13 @@ app.post('/api/stock-adjustments', async (req, res) => {
         details: {
           productName: product.name,
           adjustmentType,
-          quantityBefore,
-          quantityAfter,
+          adjustment_id: adjustmentId,
+          before: { quantity: quantityBefore },
+          after: { quantity: quantityAfter },
+          changed_fields: ['quantity'],
           quantityChange,
           reason,
+          notes,
         },
         ipAddress: req.ip,
       });
@@ -2108,16 +2586,81 @@ app.get('/api/stock-adjustments/:id', async (req, res) => {
 // Get all transactions (excluding archived)
 app.get('/api/transactions', async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    let query = 'SELECT * FROM transactions WHERE archived_at IS NULL ORDER BY timestamp DESC';
-    let params = [];
+    const {
+      startDate,
+      endDate,
+      search,
+      status,
+      paymentMethod,
+      userId,
+      limit,
+      offset,
+    } = req.query;
+
+    const filters = ['archived_at IS NULL'];
+    const params = [];
 
     if (startDate && endDate) {
-      query = 'SELECT * FROM transactions WHERE archived_at IS NULL AND timestamp BETWEEN ? AND ? ORDER BY timestamp DESC';
-      params = [startDate, endDate];
+      filters.push('timestamp BETWEEN ? AND ?');
+      params.push(startDate, endDate);
+    } else {
+      if (startDate) {
+        filters.push('timestamp >= ?');
+        params.push(startDate);
+      }
+      if (endDate) {
+        filters.push('timestamp <= ?');
+        params.push(endDate);
+      }
     }
 
-    const [rows] = execute(query, params);
+    if (search && String(search).trim()) {
+      const like = `%${String(search).trim()}%`;
+      filters.push('(id LIKE ? OR reference_number LIKE ? OR user_name LIKE ? OR customer_name LIKE ?)');
+      params.push(like, like, like, like);
+    }
+
+    if (status) {
+      filters.push('status = ?');
+      params.push(status);
+    } else {
+      // By default exclude held sales from regular transaction listings so they
+      // don't pollute sales history / reports. Clients that want held sales
+      // must pass ?status=held explicitly (e.g. held-sales screen).
+      filters.push("(status IS NULL OR status != 'held')");
+    }
+
+    if (paymentMethod) {
+      filters.push('payment_method = ?');
+      params.push(paymentMethod);
+    }
+
+    if (userId) {
+      filters.push('user_id = ?');
+      params.push(userId);
+    }
+
+    const whereClause = `WHERE ${filters.join(' AND ')}`;
+    const baseSelect = `SELECT * FROM transactions ${whereClause} ORDER BY timestamp DESC`;
+
+    const hasPagination = limit !== undefined || offset !== undefined;
+
+    if (hasPagination) {
+      const limitN = Math.min(Math.max(parseInt(limit || '50', 10) || 50, 1), 500);
+      const offsetN = Math.max(parseInt(offset || '0', 10) || 0, 0);
+      const [rows] = execute(`${baseSelect} LIMIT ? OFFSET ?`, [...params, limitN, offsetN]);
+      const [[{ total }]] = execute(
+        `SELECT COUNT(*) AS total FROM transactions ${whereClause}`,
+        params
+      );
+      const transactions = rows.map(transaction => ({
+        ...transaction,
+        items: transaction.items ? JSON.parse(transaction.items) : []
+      }));
+      return res.json({ rows: transactions, total: total || 0 });
+    }
+
+    const [rows] = execute(baseSelect, params);
 
     // Parse items JSON for each transaction
     const transactions = rows.map(transaction => ({
@@ -2322,6 +2865,842 @@ app.post('/api/transactions', async (req, res) => {
     }
     console.error('Error creating transaction:', error);
     res.status(500).json({ error: 'Failed to create transaction', details: error.message });
+  }
+});
+
+// --- Layaway ----------------------------------------------------------------
+// Create a layaway transaction: stock is deducted immediately (item is reserved
+// for the customer) but the sale is not fully paid. Optional initial deposit is
+// recorded as the first payment.
+app.post('/api/transactions/layaway', async (req, res) => {
+  let connection;
+  try {
+    const transaction = req.body || {};
+    if (!Array.isArray(transaction.items) || transaction.items.length === 0) {
+      return res.status(400).json({ error: 'Transaction items are required for layaway' });
+    }
+    const total = Number(transaction.total) || 0;
+    const deposit = Math.max(0, Number(transaction.deposit) || 0);
+    if (deposit >= total) {
+      return res.status(400).json({ error: 'Deposit must be less than total (otherwise use a regular sale)' });
+    }
+
+    connection = await getConnection();
+    connection.beginTransaction();
+
+    const transactionId = transaction.id || await generateTransactionNumber();
+
+    await connection.execute(
+      `INSERT INTO transactions (
+        id, timestamp, items, subtotal, tax, total,
+        payment_method, received_amount, change_amount, reference_number,
+        user_id, user_name, user_email,
+        discount_type, discount_percentage, discount_amount,
+        status, balance_due, customer_name, customer_phone
+      ) VALUES (?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        transactionId,
+        JSON.stringify(transaction.items),
+        transaction.subtotal ?? 0,
+        transaction.tax ?? 0,
+        total,
+        transaction.paymentMethod || 'cash',
+        deposit || null,
+        0,
+        transaction.referenceNumber || null,
+        transaction.userId || null,
+        transaction.userName || null,
+        transaction.userEmail || null,
+        transaction.discountType || null,
+        transaction.discountPercentage ?? null,
+        transaction.discountAmount ?? null,
+        'layaway',
+        total - deposit,
+        transaction.customerName || null,
+        transaction.customerPhone || null,
+      ]
+    );
+
+    for (const item of transaction.items) {
+      await connection.execute(
+        `INSERT INTO transaction_items (
+          id, transaction_id, product_id, quantity, unit_price, unit_cost, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+        [
+          uuidv4(),
+          transactionId,
+          item.productId || item.product_id,
+          Number(item.quantity) || 0,
+          Number(item.price ?? item.unit_price ?? 0),
+          Number(item.cost || 0),
+        ]
+      );
+
+      if (item.productId) {
+        const [productRows] = await connection.execute(
+          'SELECT quantity FROM products WHERE id = ? AND deleted_at IS NULL',
+          [item.productId]
+        );
+        if (!productRows || productRows.length === 0) {
+          throw new Error(`Product ${item.productId} not found or deleted`);
+        }
+        const currentQty = Number(productRows[0].quantity) || 0;
+        const quantityToSell = Number(item.quantity) || 0;
+        if (currentQty < quantityToSell) throw new Error('INSUFFICIENT_STOCK');
+        await connection.execute(
+          'UPDATE products SET quantity = quantity - ? WHERE id = ?',
+          [quantityToSell, item.productId]
+        );
+      }
+    }
+
+    // Record initial deposit as a payment
+    if (deposit > 0) {
+      await connection.execute(
+        `INSERT INTO payments (
+          id, transaction_id, amount, payment_method, reference_number,
+          user_id, user_name, notes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+        [
+          uuidv4(),
+          transactionId,
+          deposit,
+          transaction.paymentMethod || 'cash',
+          transaction.referenceNumber || null,
+          transaction.userId || null,
+          transaction.userName || null,
+          'Initial deposit',
+        ]
+      );
+    }
+
+    connection.commit();
+    connection.release();
+    connection = null;
+
+    try {
+      logActivity({
+        userId: transaction.userId,
+        userName: transaction.userName,
+        userEmail: transaction.userEmail,
+        action: ACTIVITY_ACTIONS.CREATE_SALE,
+        entityType: 'transaction',
+        entityId: transactionId,
+        details: {
+          total,
+          deposit,
+          balanceDue: total - deposit,
+          itemCount: transaction.items.length,
+          status: 'layaway',
+          customerName: transaction.customerName || null,
+        },
+      });
+    } catch (e) {
+      console.warn('Failed to log layaway creation activity:', e);
+    }
+
+    res.status(201).json({ id: transactionId, status: 'layaway', balanceDue: total - deposit, total, deposit });
+  } catch (error) {
+    if (connection) {
+      try { connection.rollback(); connection.release(); } catch {}
+    }
+    if (error.message === 'INSUFFICIENT_STOCK') {
+      return res.status(400).json({ error: 'Insufficient stock to create layaway' });
+    }
+    console.error('Error creating layaway:', error);
+    res.status(500).json({ error: 'Failed to create layaway', details: error.message });
+  }
+});
+
+// --- Held / Parked Sales -----------------------------------------------------
+// Create a "held" sale: items are persisted but stock is NOT deducted.
+app.post('/api/transactions/hold', async (req, res) => {
+  let connection;
+  try {
+    const transaction = req.body || {};
+    if (!Array.isArray(transaction.items) || transaction.items.length === 0) {
+      return res.status(400).json({ error: 'Transaction items are required to hold' });
+    }
+
+    connection = await getConnection();
+    connection.beginTransaction();
+
+    const transactionId = transaction.id || await generateTransactionNumber();
+
+    await connection.execute(
+      `INSERT INTO transactions (
+        id, timestamp, items, subtotal, tax, total,
+        payment_method, received_amount, change_amount, reference_number,
+        user_id, user_name, user_email,
+        discount_type, discount_percentage, discount_amount,
+        status, balance_due, customer_name, customer_phone
+      ) VALUES (?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        transactionId,
+        JSON.stringify(transaction.items),
+        transaction.subtotal ?? 0,
+        transaction.tax ?? 0,
+        transaction.total ?? 0,
+        transaction.paymentMethod || 'cash',
+        null,
+        0,
+        null,
+        transaction.userId || null,
+        transaction.userName || null,
+        transaction.userEmail || null,
+        transaction.discountType || null,
+        transaction.discountPercentage ?? null,
+        transaction.discountAmount ?? null,
+        'held',
+        Number(transaction.total) || 0,
+        transaction.customerName || null,
+        transaction.customerPhone || null,
+      ]
+    );
+
+    // Persist line items for visibility (no stock deduction yet)
+    for (const item of transaction.items) {
+      await connection.execute(
+        `INSERT INTO transaction_items (
+          id, transaction_id, product_id, quantity, unit_price, unit_cost, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+        [
+          uuidv4(),
+          transactionId,
+          item.productId || item.product_id,
+          Number(item.quantity) || 0,
+          Number(item.price ?? item.unit_price ?? 0),
+          Number(item.cost || 0),
+        ]
+      );
+    }
+
+    connection.commit();
+    connection.release();
+    connection = null;
+
+    try {
+      logActivity({
+        userId: transaction.userId,
+        userName: transaction.userName,
+        userEmail: transaction.userEmail,
+        action: ACTIVITY_ACTIONS.SALE_HELD,
+        entityType: 'transaction',
+        entityId: transactionId,
+        details: {
+          total: transaction.total,
+          itemCount: transaction.items.length,
+          customerName: transaction.customerName || null,
+          note: transaction.holdNote || null,
+        },
+      });
+    } catch (e) {
+      console.warn('Failed to log SALE_HELD activity:', e);
+    }
+
+    res.status(201).json({ id: transactionId, status: 'held' });
+  } catch (error) {
+    if (connection) {
+      try { connection.rollback(); connection.release(); } catch {}
+    }
+    console.error('Error holding transaction:', error);
+    res.status(500).json({ error: 'Failed to hold transaction', details: error.message });
+  }
+});
+
+// Resume a held sale: return it to the POS, delete the held row so it doesn't
+// leak stock locks or duplicate into the sales ledger.
+app.post('/api/transactions/:id/resume', async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+
+    const [rows] = execute(
+      'SELECT * FROM transactions WHERE id = ? AND status = ?',
+      [id, 'held']
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Held transaction not found' });
+    }
+    const held = rows[0];
+    let items = [];
+    try { items = held.items ? JSON.parse(held.items) : []; } catch { items = []; }
+
+    connection = await getConnection();
+    connection.beginTransaction();
+    await connection.execute('DELETE FROM transaction_items WHERE transaction_id = ?', [id]);
+    await connection.execute('DELETE FROM transactions WHERE id = ?', [id]);
+    connection.commit();
+    connection.release();
+    connection = null;
+
+    try {
+      const user = getUserFromRequest(req);
+      logActivity({
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        action: ACTIVITY_ACTIONS.SALE_RESUMED,
+        entityType: 'transaction',
+        entityId: id,
+        details: {
+          total: held.total,
+          itemCount: items.length,
+        },
+      });
+    } catch (e) {
+      console.warn('Failed to log SALE_RESUMED activity:', e);
+    }
+
+    res.json({
+      id: held.id,
+      items,
+      subtotal: held.subtotal,
+      tax: held.tax,
+      total: held.total,
+      paymentMethod: held.payment_method,
+      discountType: held.discount_type,
+      discountPercentage: held.discount_percentage,
+      discountAmount: held.discount_amount,
+      customerName: held.customer_name,
+      customerPhone: held.customer_phone,
+    });
+  } catch (error) {
+    if (connection) {
+      try { connection.rollback(); connection.release(); } catch {}
+    }
+    console.error('Error resuming transaction:', error);
+    res.status(500).json({ error: 'Failed to resume transaction', details: error.message });
+  }
+});
+
+// Delete a held sale (hard delete). Safe because held sales don't deduct stock.
+app.delete('/api/transactions/:id/hold', async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+    const [[held]] = execute(
+      'SELECT id, total, status FROM transactions WHERE id = ?',
+      [id]
+    );
+    if (!held) return res.status(404).json({ error: 'Transaction not found' });
+    if (held.status !== 'held') {
+      return res.status(400).json({ error: 'Only held sales can be deleted this way' });
+    }
+
+    connection = await getConnection();
+    connection.beginTransaction();
+    await connection.execute('DELETE FROM transaction_items WHERE transaction_id = ?', [id]);
+    await connection.execute('DELETE FROM transactions WHERE id = ?', [id]);
+    connection.commit();
+    connection.release();
+    connection = null;
+
+    try {
+      const user = getUserFromRequest(req);
+      logActivity({
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        action: ACTIVITY_ACTIONS.SALE_RESUMED,
+        entityType: 'transaction',
+        entityId: id,
+        details: { deleted: true, total: held.total, message: 'Held sale discarded' },
+      });
+    } catch (e) {
+      console.warn('Failed to log held sale deletion:', e);
+    }
+
+    res.json({ success: true, id });
+  } catch (error) {
+    if (connection) { try { connection.rollback(); connection.release(); } catch {} }
+    console.error('Error deleting held sale:', error);
+    res.status(500).json({ error: 'Failed to delete held sale', details: error.message });
+  }
+});
+
+// --- Payments (used by held / layaway) --------------------------------------
+app.post('/api/transactions/:id/payments', async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+    const payment = req.body || {};
+    const amount = Number(payment.amount);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Payment amount must be > 0' });
+    }
+
+    const [[txn]] = execute(
+      'SELECT id, total, balance_due, status FROM transactions WHERE id = ?',
+      [id]
+    );
+    if (!txn) return res.status(404).json({ error: 'Transaction not found' });
+
+    connection = await getConnection();
+    connection.beginTransaction();
+
+    const paymentId = payment.id || uuidv4();
+    await connection.execute(
+      `INSERT INTO payments (
+        id, transaction_id, amount, payment_method, reference_number,
+        user_id, user_name, notes, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [
+        paymentId,
+        id,
+        amount,
+        payment.paymentMethod || payment.method || 'cash',
+        payment.referenceNumber || null,
+        payment.userId || null,
+        payment.userName || null,
+        payment.notes || null,
+      ]
+    );
+
+    const currentBalance = Number(txn.balance_due) || 0;
+    const newBalance = Math.max(0, currentBalance - amount);
+    const newStatus = newBalance <= 0.0001 ? 'paid' : (txn.status === 'held' ? 'partially_paid' : (txn.status || 'partially_paid'));
+
+    await connection.execute(
+      'UPDATE transactions SET balance_due = ?, status = ? WHERE id = ?',
+      [newBalance, newStatus, id]
+    );
+
+    connection.commit();
+    connection.release();
+    connection = null;
+
+    try {
+      logActivity({
+        userId: payment.userId,
+        userName: payment.userName,
+        action: ACTIVITY_ACTIONS.PAYMENT_ADDED,
+        entityType: 'transaction',
+        entityId: id,
+        details: {
+          amount,
+          paymentMethod: payment.paymentMethod || payment.method || 'cash',
+          newBalance,
+          newStatus,
+        },
+      });
+    } catch (e) {
+      console.warn('Failed to log PAYMENT_ADDED activity:', e);
+    }
+
+    res.status(201).json({ id: paymentId, transactionId: id, balanceDue: newBalance, status: newStatus });
+  } catch (error) {
+    if (connection) {
+      try { connection.rollback(); connection.release(); } catch {}
+    }
+    console.error('Error adding payment:', error);
+    res.status(500).json({ error: 'Failed to add payment', details: error.message });
+  }
+});
+
+app.get('/api/transactions/:id/payments', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = execute(
+      `SELECT id, amount, payment_method, reference_number, user_id, user_name,
+              notes, created_at
+       FROM payments WHERE transaction_id = ? ORDER BY created_at ASC`,
+      [id]
+    );
+    res.json({ rows });
+  } catch (error) {
+    console.error('Error fetching payments:', error);
+    res.status(500).json({ error: 'Failed to fetch payments', details: error.message });
+  }
+});
+
+// --- Refunds / Returns -------------------------------------------------------
+
+// Get refundable line items for a transaction (original qty - already refunded qty)
+app.get('/api/transactions/:id/refundable', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [[txn]] = execute(
+      `SELECT id, timestamp, total, status, archived_at, items
+       FROM transactions WHERE id = ?`,
+      [id]
+    );
+    if (!txn) return res.status(404).json({ error: 'Transaction not found' });
+    if (txn.archived_at) return res.status(400).json({ error: 'Cannot refund an archived transaction' });
+    if (txn.status === 'held' || txn.status === 'layaway') {
+      return res.status(400).json({ error: `Cannot refund a ${txn.status} transaction` });
+    }
+
+    // Prefer transaction_items table, fall back to embedded JSON items
+    const [itemRows] = execute(
+      `SELECT ti.id, ti.product_id, ti.quantity, ti.unit_price, ti.unit_cost,
+              p.name, p.barcode
+       FROM transaction_items ti
+       LEFT JOIN products p ON p.id = ti.product_id
+       WHERE ti.transaction_id = ?`,
+      [id]
+    );
+
+    let originalItems = [];
+    if (itemRows && itemRows.length > 0) {
+      originalItems = itemRows.map(r => ({
+        productId: r.product_id,
+        name: r.name || 'Unknown product',
+        barcode: r.barcode || null,
+        quantity: Number(r.quantity) || 0,
+        unitPrice: Number(r.unit_price) || 0,
+        unitCost: Number(r.unit_cost) || 0,
+      }));
+    } else if (txn.items) {
+      try {
+        const parsed = typeof txn.items === 'string' ? JSON.parse(txn.items) : txn.items;
+        originalItems = (parsed || []).map(it => ({
+          productId: it.productId || it.product_id || it.id,
+          name: it.name || 'Unknown product',
+          barcode: it.barcode || null,
+          quantity: Number(it.quantity) || 0,
+          unitPrice: Number(it.price ?? it.unit_price ?? 0),
+          unitCost: Number(it.cost ?? it.unit_cost ?? 0),
+        }));
+      } catch {
+        originalItems = [];
+      }
+    }
+
+    // Aggregate already-refunded quantities per product
+    const [refundedRows] = execute(
+      `SELECT ri.product_id, SUM(ri.quantity) AS refunded_qty
+       FROM refund_items ri
+       INNER JOIN refunds r ON r.id = ri.refund_id
+       WHERE r.transaction_id = ?
+       GROUP BY ri.product_id`,
+      [id]
+    );
+    const refundedMap = {};
+    for (const row of refundedRows || []) {
+      refundedMap[row.product_id] = Number(row.refunded_qty) || 0;
+    }
+
+    // Aggregate original items by productId (in case of duplicates)
+    const aggregated = {};
+    for (const it of originalItems) {
+      if (!it.productId) continue;
+      if (!aggregated[it.productId]) {
+        aggregated[it.productId] = { ...it, quantity: 0 };
+      }
+      aggregated[it.productId].quantity += it.quantity;
+    }
+
+    const items = Object.values(aggregated).map(it => ({
+      ...it,
+      refundedQuantity: refundedMap[it.productId] || 0,
+      refundableQuantity: Math.max(0, it.quantity - (refundedMap[it.productId] || 0)),
+    }));
+
+    res.json({
+      transactionId: id,
+      transactionTotal: Number(txn.total) || 0,
+      transactionDate: txn.timestamp,
+      status: txn.status,
+      items,
+    });
+  } catch (error) {
+    console.error('Error fetching refundable items:', error);
+    res.status(500).json({ error: 'Failed to fetch refundable items', details: error.message });
+  }
+});
+
+// Create a refund for a transaction
+app.post('/api/refunds', async (req, res) => {
+  let connection;
+  try {
+    const body = req.body || {};
+    const transactionId = body.transactionId || body.transaction_id;
+    if (!transactionId) return res.status(400).json({ error: 'transactionId is required' });
+    if (!body.reason || !String(body.reason).trim()) {
+      return res.status(400).json({ error: 'reason is required' });
+    }
+    if (!Array.isArray(body.items) || body.items.length === 0) {
+      return res.status(400).json({ error: 'At least one refund item is required' });
+    }
+
+    // Validate transaction
+    const [[txn]] = execute(
+      `SELECT id, status, archived_at, items, timestamp
+       FROM transactions WHERE id = ?`,
+      [transactionId]
+    );
+    if (!txn) return res.status(404).json({ error: 'Transaction not found' });
+    if (txn.archived_at) return res.status(400).json({ error: 'Cannot refund an archived transaction' });
+    if (txn.status === 'held' || txn.status === 'layaway') {
+      return res.status(400).json({ error: `Cannot refund a ${txn.status} transaction` });
+    }
+
+    // Build a map of original quantities and unit prices per product
+    const [itemRows] = execute(
+      `SELECT product_id, quantity, unit_price
+       FROM transaction_items WHERE transaction_id = ?`,
+      [transactionId]
+    );
+    const origMap = {};
+    if (itemRows && itemRows.length > 0) {
+      for (const r of itemRows) {
+        const pid = r.product_id;
+        if (!origMap[pid]) origMap[pid] = { quantity: 0, unitPrice: Number(r.unit_price) || 0 };
+        origMap[pid].quantity += Number(r.quantity) || 0;
+        // Prefer the latest non-zero unit price
+        if (Number(r.unit_price) > 0) origMap[pid].unitPrice = Number(r.unit_price);
+      }
+    } else if (txn.items) {
+      try {
+        const parsed = typeof txn.items === 'string' ? JSON.parse(txn.items) : txn.items;
+        for (const it of parsed || []) {
+          const pid = it.productId || it.product_id || it.id;
+          if (!pid) continue;
+          if (!origMap[pid]) origMap[pid] = { quantity: 0, unitPrice: Number(it.price ?? it.unit_price ?? 0) };
+          origMap[pid].quantity += Number(it.quantity) || 0;
+        }
+      } catch {}
+    }
+
+    // Already-refunded qty per product
+    const [refundedRows] = execute(
+      `SELECT ri.product_id, SUM(ri.quantity) AS refunded_qty
+       FROM refund_items ri
+       INNER JOIN refunds r ON r.id = ri.refund_id
+       WHERE r.transaction_id = ?
+       GROUP BY ri.product_id`,
+      [transactionId]
+    );
+    const refundedMap = {};
+    for (const row of refundedRows || []) {
+      refundedMap[row.product_id] = Number(row.refunded_qty) || 0;
+    }
+
+    // Validate each refund line
+    const normalizedItems = [];
+    for (const raw of body.items) {
+      const productId = raw.productId || raw.product_id;
+      const quantity = Number(raw.quantity) || 0;
+      if (!productId) return res.status(400).json({ error: 'productId is required for each refund item' });
+      if (quantity <= 0) continue;
+      const orig = origMap[productId];
+      if (!orig) {
+        return res.status(400).json({ error: `Product ${productId} is not in the original transaction` });
+      }
+      const alreadyRefunded = refundedMap[productId] || 0;
+      const remaining = orig.quantity - alreadyRefunded;
+      if (quantity > remaining) {
+        return res.status(400).json({
+          error: `Refund quantity for product ${productId} exceeds remaining (${remaining})`,
+        });
+      }
+      const unitPrice = Number(raw.unitPrice ?? raw.unit_price ?? orig.unitPrice) || 0;
+      normalizedItems.push({
+        productId,
+        quantity,
+        unitPrice,
+        subtotal: unitPrice * quantity,
+        returnToStock: raw.returnToStock !== false && raw.return_to_stock !== false,
+      });
+    }
+
+    if (normalizedItems.length === 0) {
+      return res.status(400).json({ error: 'No valid refund items' });
+    }
+
+    const totalAmount = normalizedItems.reduce((sum, it) => sum + it.subtotal, 0);
+
+    connection = await getConnection();
+    connection.beginTransaction();
+
+    const refundId = body.id || uuidv4();
+    await connection.execute(
+      `INSERT INTO refunds (
+        id, transaction_id, refund_date, reason, notes, total_amount,
+        processed_by, processed_by_id, created_at
+      ) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, datetime('now'))`,
+      [
+        refundId,
+        transactionId,
+        String(body.reason).trim(),
+        body.notes ? String(body.notes).trim() : null,
+        totalAmount,
+        body.userName || null,
+        body.userId || null,
+      ]
+    );
+
+    const insertedItems = [];
+    for (const it of normalizedItems) {
+      const refundItemId = uuidv4();
+      await connection.execute(
+        `INSERT INTO refund_items (
+          id, refund_id, product_id, quantity, unit_price, subtotal, return_to_stock
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          refundItemId,
+          refundId,
+          it.productId,
+          it.quantity,
+          it.unitPrice,
+          it.subtotal,
+          it.returnToStock ? 1 : 0,
+        ]
+      );
+
+      if (it.returnToStock) {
+        // Only return to stock if product still exists (not permanently deleted)
+        const [prodRows] = await connection.execute(
+          'SELECT id FROM products WHERE id = ?',
+          [it.productId]
+        );
+        if (prodRows && prodRows.length > 0) {
+          await connection.execute(
+            'UPDATE products SET quantity = quantity + ?, updated_at = datetime(\'now\') WHERE id = ?',
+            [it.quantity, it.productId]
+          );
+        }
+      }
+
+      insertedItems.push({ ...it, id: refundItemId });
+    }
+
+    // Update transaction status to refunded / partially_refunded
+    const totalOriginalQty = Object.values(origMap).reduce((sum, x) => sum + x.quantity, 0);
+    const totalRefundedAfter = Object.entries(refundedMap).reduce((s, [, v]) => s + v, 0)
+      + normalizedItems.reduce((s, it) => s + it.quantity, 0);
+    const newStatus = totalRefundedAfter >= totalOriginalQty ? 'refunded' : 'partially_refunded';
+    await connection.execute(
+      'UPDATE transactions SET status = ? WHERE id = ?',
+      [newStatus, transactionId]
+    );
+
+    connection.commit();
+    connection.release();
+    connection = null;
+
+    try {
+      logActivity({
+        userId: body.userId,
+        userName: body.userName,
+        userEmail: body.userEmail,
+        action: ACTIVITY_ACTIONS.REFUND_ISSUED,
+        entityType: 'transaction',
+        entityId: transactionId,
+        details: {
+          refundId,
+          totalAmount,
+          itemCount: normalizedItems.length,
+          reason: String(body.reason).trim(),
+          returnedToStock: normalizedItems.filter(i => i.returnToStock).length,
+          newTransactionStatus: newStatus,
+          items: normalizedItems.map(i => ({
+            productId: i.productId,
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+            returnToStock: i.returnToStock,
+          })),
+        },
+      });
+    } catch (e) {
+      console.warn('Failed to log REFUND_ISSUED activity:', e);
+    }
+
+    res.status(201).json({
+      id: refundId,
+      transactionId,
+      totalAmount,
+      items: insertedItems,
+      transactionStatus: newStatus,
+    });
+  } catch (error) {
+    if (connection) {
+      try { connection.rollback(); connection.release(); } catch {}
+    }
+    console.error('Error creating refund:', error);
+    res.status(500).json({ error: 'Failed to create refund', details: error.message });
+  }
+});
+
+// List refunds with filters + pagination
+app.get('/api/refunds', async (req, res) => {
+  try {
+    const {
+      transactionId,
+      startDate,
+      endDate,
+      limit,
+      offset,
+      search,
+    } = req.query;
+
+    const where = [];
+    const params = [];
+    if (transactionId) { where.push('r.transaction_id = ?'); params.push(transactionId); }
+    if (startDate) { where.push('r.refund_date >= ?'); params.push(startDate); }
+    if (endDate) { where.push('r.refund_date <= ?'); params.push(endDate); }
+    if (search) {
+      where.push('(r.id LIKE ? OR r.transaction_id LIKE ? OR r.reason LIKE ? OR r.processed_by LIKE ?)');
+      const like = `%${search}%`;
+      params.push(like, like, like, like);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    let sql = `
+      SELECT r.id, r.transaction_id, r.refund_date, r.reason, r.notes,
+             r.total_amount, r.processed_by, r.processed_by_id, r.created_at,
+             (SELECT COUNT(*) FROM refund_items ri WHERE ri.refund_id = r.id) AS item_count
+      FROM refunds r
+      ${whereSql}
+      ORDER BY r.refund_date DESC
+    `;
+    const countSql = `SELECT COUNT(*) AS total FROM refunds r ${whereSql}`;
+
+    const pageParams = [...params];
+    if (limit !== undefined) {
+      sql += ' LIMIT ? OFFSET ?';
+      pageParams.push(Number(limit) || 50, Number(offset) || 0);
+    }
+
+    const [rows] = execute(sql, pageParams);
+    const [[countRow]] = execute(countSql, params);
+    res.json({ rows: rows || [], total: Number(countRow?.total) || 0 });
+  } catch (error) {
+    console.error('Error listing refunds:', error);
+    res.status(500).json({ error: 'Failed to list refunds', details: error.message });
+  }
+});
+
+// Get a single refund with its items
+app.get('/api/refunds/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [[refund]] = execute(
+      `SELECT r.id, r.transaction_id, r.refund_date, r.reason, r.notes,
+              r.total_amount, r.processed_by, r.processed_by_id, r.created_at,
+              t.timestamp AS transaction_date, t.total AS transaction_total,
+              t.customer_name, t.user_name AS original_cashier
+       FROM refunds r
+       LEFT JOIN transactions t ON t.id = r.transaction_id
+       WHERE r.id = ?`,
+      [id]
+    );
+    if (!refund) return res.status(404).json({ error: 'Refund not found' });
+
+    const [items] = execute(
+      `SELECT ri.id, ri.product_id, ri.quantity, ri.unit_price, ri.subtotal,
+              ri.return_to_stock, p.name AS product_name, p.barcode
+       FROM refund_items ri
+       LEFT JOIN products p ON p.id = ri.product_id
+       WHERE ri.refund_id = ?`,
+      [id]
+    );
+
+    res.json({ ...refund, items: items || [] });
+  } catch (error) {
+    console.error('Error fetching refund:', error);
+    res.status(500).json({ error: 'Failed to fetch refund', details: error.message });
   }
 });
 
@@ -2778,6 +4157,226 @@ app.get('/api/analytics/sales', async (req, res) => {
   } catch (error) {
     console.error('Error fetching sales analytics:', error);
     res.status(500).json({ error: 'Failed to fetch sales analytics' });
+  }
+});
+
+// --- Reporting endpoints ---------------------------------------------------
+
+// ABC analysis: classify products by revenue contribution using Pareto (A/B/C)
+// Query params:
+//   startDate, endDate  - ISO dates (optional). Defaults to last 90 days.
+//   metric              - 'revenue' (default) | 'quantity' | 'profit'
+app.get('/api/reports/abc-analysis', async (req, res) => {
+  try {
+    const now = new Date();
+    const defaultStart = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const startDate = req.query.startDate || defaultStart.toISOString();
+    const endDate = req.query.endDate || now.toISOString();
+    const metric = ['revenue', 'quantity', 'profit'].includes(req.query.metric)
+      ? req.query.metric
+      : 'revenue';
+
+    // Aggregate per product from completed/partially_paid transactions in date range
+    const [rows] = execute(
+      `SELECT ti.product_id,
+              COALESCE(p.name, 'Deleted product') AS product_name,
+              COALESCE(p.category_name, 'Uncategorized') AS category_name,
+              SUM(ti.quantity) AS total_quantity,
+              SUM(ti.quantity * ti.unit_price) AS total_revenue,
+              SUM(ti.quantity * (ti.unit_price - COALESCE(ti.unit_cost, 0))) AS total_profit
+       FROM transaction_items ti
+       JOIN transactions t ON t.id = ti.transaction_id
+       LEFT JOIN products p ON p.id = ti.product_id
+       WHERE t.timestamp >= ?
+         AND t.timestamp <= ?
+         AND (t.status IS NULL OR t.status IN ('completed', 'partially_paid', 'paid'))
+         AND (t.archived_at IS NULL)
+       GROUP BY ti.product_id
+       ORDER BY total_revenue DESC`,
+      [startDate, endDate]
+    );
+
+    const metricKey = metric === 'quantity' ? 'total_quantity'
+      : metric === 'profit' ? 'total_profit'
+      : 'total_revenue';
+
+    const sorted = [...rows].sort((a, b) => (b[metricKey] || 0) - (a[metricKey] || 0));
+    const grandTotal = sorted.reduce((sum, r) => sum + (Number(r[metricKey]) || 0), 0);
+
+    let runningTotal = 0;
+    const enriched = sorted.map(r => {
+      const value = Number(r[metricKey]) || 0;
+      runningTotal += value;
+      const cumulativePct = grandTotal > 0 ? (runningTotal / grandTotal) * 100 : 0;
+      const sharePct = grandTotal > 0 ? (value / grandTotal) * 100 : 0;
+      let classification = 'C';
+      if (cumulativePct <= 80) classification = 'A';
+      else if (cumulativePct <= 95) classification = 'B';
+      return {
+        productId: r.product_id,
+        productName: r.product_name,
+        categoryName: r.category_name,
+        totalQuantity: Number(r.total_quantity) || 0,
+        totalRevenue: Number(r.total_revenue) || 0,
+        totalProfit: Number(r.total_profit) || 0,
+        metricValue: value,
+        sharePct,
+        cumulativePct,
+        classification,
+      };
+    });
+
+    const summary = enriched.reduce((acc, item) => {
+      acc[item.classification].count += 1;
+      acc[item.classification].value += item.metricValue;
+      return acc;
+    }, {
+      A: { count: 0, value: 0 },
+      B: { count: 0, value: 0 },
+      C: { count: 0, value: 0 },
+    });
+
+    res.json({
+      metric,
+      startDate,
+      endDate,
+      grandTotal,
+      totalProducts: enriched.length,
+      summary,
+      rows: enriched,
+    });
+  } catch (error) {
+    console.error('Error running ABC analysis:', error);
+    res.status(500).json({ error: 'Failed to run ABC analysis', details: error.message });
+  }
+});
+
+// Dead stock: products that have not sold (or sold very little) in a given window.
+// Query params:
+//   days           - lookback window (default 60)
+//   maxQuantitySold - threshold; products with <= this sold are flagged (default 0)
+//   includeZeroStock - 'true' to include products with 0 on hand (default false)
+app.get('/api/reports/dead-stock', async (req, res) => {
+  try {
+    const days = Math.max(1, parseInt(req.query.days, 10) || 60);
+    const maxQuantitySold = Math.max(0, parseInt(req.query.maxQuantitySold, 10) || 0);
+    const includeZeroStock = req.query.includeZeroStock === 'true';
+
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const [products] = execute(
+      `SELECT p.id, p.name, p.category_name, p.price, p.cost, p.quantity,
+              p.barcode, p.updated_at, p.created_at
+       FROM products p
+       WHERE p.deleted_at IS NULL
+         AND (p.status IS NULL OR p.status != 'unavailable')
+         ${includeZeroStock ? '' : 'AND p.quantity > 0'}`,
+      []
+    );
+
+    const rows = [];
+    for (const p of products) {
+      const [[salesAgg]] = execute(
+        `SELECT COALESCE(SUM(ti.quantity), 0) AS qty_sold,
+                MAX(ti.created_at) AS last_sold_at
+         FROM transaction_items ti
+         JOIN transactions t ON t.id = ti.transaction_id
+         WHERE ti.product_id = ?
+           AND t.timestamp >= ?
+           AND (t.status IS NULL OR t.status IN ('completed', 'partially_paid', 'paid'))
+           AND (t.archived_at IS NULL)`,
+        [p.id, cutoff]
+      );
+
+      const qtySold = Number(salesAgg?.qty_sold || 0);
+      if (qtySold > maxQuantitySold) continue;
+
+      const [[lastEverRow]] = execute(
+        `SELECT MAX(ti.created_at) AS last_sold_at
+         FROM transaction_items ti
+         WHERE ti.product_id = ?`,
+        [p.id]
+      );
+
+      const inventoryCost = Number(p.cost || 0) * Number(p.quantity || 0);
+      const lastSoldEver = lastEverRow?.last_sold_at || null;
+      const daysSinceLastSale = lastSoldEver
+        ? Math.floor((Date.now() - new Date(lastSoldEver).getTime()) / (1000 * 60 * 60 * 24))
+        : null;
+
+      rows.push({
+        productId: p.id,
+        productName: p.name,
+        categoryName: p.category_name,
+        barcode: p.barcode,
+        quantityOnHand: Number(p.quantity || 0),
+        price: Number(p.price || 0),
+        cost: Number(p.cost || 0),
+        inventoryCostValue: inventoryCost,
+        quantitySoldInWindow: qtySold,
+        lastSoldAt: lastSoldEver,
+        daysSinceLastSale,
+        createdAt: p.created_at,
+      });
+    }
+
+    rows.sort((a, b) => b.inventoryCostValue - a.inventoryCostValue);
+
+    const totalCostLocked = rows.reduce((s, r) => s + r.inventoryCostValue, 0);
+
+    res.json({
+      days,
+      maxQuantitySold,
+      includeZeroStock,
+      cutoff,
+      totalFlagged: rows.length,
+      totalCostLocked,
+      rows,
+    });
+  } catch (error) {
+    console.error('Error running dead stock report:', error);
+    res.status(500).json({ error: 'Failed to run dead stock report', details: error.message });
+  }
+});
+
+// Profit report: revenue, cost, gross profit, margin within a date range.
+app.get('/api/reports/profit', async (req, res) => {
+  try {
+    const now = new Date();
+    const defaultStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const startDate = req.query.startDate || defaultStart.toISOString();
+    const endDate = req.query.endDate || now.toISOString();
+
+    const [[totals]] = execute(
+      `SELECT COALESCE(SUM(ti.quantity * ti.unit_price), 0) AS revenue,
+              COALESCE(SUM(ti.quantity * COALESCE(ti.unit_cost, 0)), 0) AS cost,
+              COALESCE(SUM(ti.quantity), 0) AS units_sold
+       FROM transaction_items ti
+       JOIN transactions t ON t.id = ti.transaction_id
+       WHERE t.timestamp >= ?
+         AND t.timestamp <= ?
+         AND (t.status IS NULL OR t.status IN ('completed', 'partially_paid', 'paid'))
+         AND (t.archived_at IS NULL)`,
+      [startDate, endDate]
+    );
+
+    const revenue = Number(totals?.revenue || 0);
+    const cost = Number(totals?.cost || 0);
+    const profit = revenue - cost;
+    const marginPct = revenue > 0 ? (profit / revenue) * 100 : 0;
+
+    res.json({
+      startDate,
+      endDate,
+      revenue,
+      cost,
+      profit,
+      marginPct,
+      unitsSold: Number(totals?.units_sold || 0),
+    });
+  } catch (error) {
+    console.error('Error running profit report:', error);
+    res.status(500).json({ error: 'Failed to run profit report', details: error.message });
   }
 });
 

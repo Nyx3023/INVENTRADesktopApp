@@ -13,7 +13,8 @@ import {
   FunnelIcon,
   UserIcon,
   CreditCardIcon,
-  XMarkIcon
+  XMarkIcon,
+  ArrowUturnLeftIcon
 } from '@heroicons/react/24/outline';
 import { transactionService } from '../../services/api';
 import { useAuth, usePermissions } from '../../context/AuthContext';
@@ -22,11 +23,13 @@ import { useSettings } from '../../context/SettingsContext';
 import { toast } from 'react-hot-toast';
 import { formatCurrency, formatDate, parseLocalTimestamp } from '../../utils/formatters';
 import ReceiptModal from './ReceiptModal';
+import RefundModal from './RefundModal';
 import DeleteConfirmationModal from './DeleteConfirmationModal';
 import ExportSettingsModal from './ExportSettingsModal';
 import { printerService } from '../../utils/printerService';
 import { exportSalesToExcel } from '../../utils/exportUtils';
 import AdminOverrideModal from '../common/AdminOverrideModal';
+import EmptyState from '../common/EmptyState';
 
 const SalesScreen = () => {
   const { user } = useAuth();
@@ -37,6 +40,7 @@ const SalesScreen = () => {
   const [filteredTransactions, setFilteredTransactions] = useState([]);
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [refundTransaction, setRefundTransaction] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showOverrideModal, setShowOverrideModal] = useState(false);
@@ -570,8 +574,12 @@ const SalesScreen = () => {
             <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className={`px-6 py-8 text-center ${colors.text.secondary}`}>
-                    No transactions found
+                  <td colSpan="7">
+                    <EmptyState
+                      icon={ShoppingBagIcon}
+                      title="No transactions found"
+                      description="Try adjusting the date range or filters to see more sales."
+                    />
                   </td>
                 </tr>
               ) : (
@@ -603,12 +611,30 @@ const SalesScreen = () => {
                       </div>
                     </td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm ${colors.text.secondary}`}>
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${(transaction.payment_method || transaction.paymentMethod) === 'cash'
-                        ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300'
-                        : 'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300'
-                        }`}>
-                        {(transaction.payment_method || transaction.paymentMethod || 'cash').toUpperCase()}
-                      </span>
+                      <div className="flex flex-wrap gap-1">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${(transaction.payment_method || transaction.paymentMethod) === 'cash'
+                          ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300'
+                          : 'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300'
+                          }`}>
+                          {(transaction.payment_method || transaction.paymentMethod || 'cash').toUpperCase()}
+                        </span>
+                        {(() => {
+                          const status = transaction.status || 'completed';
+                          if (status === 'completed' || status === 'held') return null;
+                          const map = {
+                            refunded: 'bg-rose-100 dark:bg-rose-900/20 text-rose-800 dark:text-rose-300',
+                            partially_refunded: 'bg-orange-100 dark:bg-orange-900/20 text-orange-800 dark:text-orange-300',
+                            layaway: 'bg-indigo-100 dark:bg-indigo-900/20 text-indigo-800 dark:text-indigo-300',
+                            partially_paid: 'bg-amber-100 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300',
+                            paid: 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-300',
+                          };
+                          return (
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${map[status] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
+                              {status.replace('_', ' ').toUpperCase()}
+                            </span>
+                          );
+                        })()}
+                      </div>
                     </td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm ${colors.text.secondary}`}>
                       <div className="flex items-center gap-2">
@@ -634,6 +660,19 @@ const SalesScreen = () => {
                         >
                           <PrinterIcon className="h-5 w-5" />
                         </button>
+                        {(() => {
+                          const status = transaction.status || 'completed';
+                          const canRefund = !['held', 'layaway', 'refunded'].includes(status);
+                          return canRefund && hasPermission('process_sales') ? (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setRefundTransaction(transaction); }}
+                              className="text-rose-600 dark:text-rose-400 hover:text-rose-900 dark:hover:text-rose-300 flex-shrink-0"
+                              title={status === 'partially_refunded' ? 'Continue refund' : 'Issue Refund'}
+                            >
+                              <ArrowUturnLeftIcon className="h-5 w-5" />
+                            </button>
+                          ) : null;
+                        })()}
                         <button
                           onClick={(e) => { e.stopPropagation(); initiateDeleteTransaction(transaction); }}
                           className="text-amber-600 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-300 flex-shrink-0"
@@ -774,6 +813,15 @@ const SalesScreen = () => {
         />
       )}
 
+      {/* Refund Modal */}
+      {refundTransaction && (
+        <RefundModal
+          transaction={refundTransaction}
+          onClose={() => setRefundTransaction(null)}
+          onRefunded={() => { loadTransactions(); }}
+        />
+      )}
+
       {/* Delete Confirmation Modal */}
       {showDeleteModal && transactionToDelete && (
         <DeleteConfirmationModal
@@ -789,6 +837,7 @@ const SalesScreen = () => {
         onClose={() => setShowOverrideModal(false)}
         onSuccess={handleOverrideSuccess}
         actionDescription="archive this transaction"
+        context="archive_transaction"
       />
     </div>
   );

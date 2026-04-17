@@ -5,7 +5,9 @@ import { productService, transactionService } from '../../services/api';
 import { useGlobalBarcode } from '../../context/BarcodeContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth, usePermissions } from '../../context/AuthContext';
-import { MagnifyingGlassIcon, XMarkIcon, ShoppingCartIcon, BanknotesIcon, CameraIcon, ReceiptPercentIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, XMarkIcon, ShoppingCartIcon, BanknotesIcon, CameraIcon, ReceiptPercentIcon, TrashIcon, PauseCircleIcon, PlayCircleIcon, ClockIcon, UserIcon } from '@heroicons/react/24/outline';
+import ModalPortal from '../common/ModalPortal';
+import EmptyState from '../common/EmptyState';
 import AsyncImage, { preloadImages } from '../common/AsyncImage';
 import { useSettings } from '../../context/SettingsContext';
 import { formatCurrency } from '../../utils/formatters';
@@ -41,6 +43,16 @@ const POSScreen = () => {
   const [customDiscountInput, setCustomDiscountInput] = useState('');
   const [showRestartPasswordModal, setShowRestartPasswordModal] = useState(false);
   const [showRestartConfirmation, setShowRestartConfirmation] = useState(false);
+  const [showHoldModal, setShowHoldModal] = useState(false);
+  const [holdCustomerName, setHoldCustomerName] = useState('');
+  const [holdCustomerPhone, setHoldCustomerPhone] = useState('');
+  const [holdNote, setHoldNote] = useState('');
+  const [showHeldDrawer, setShowHeldDrawer] = useState(false);
+  const [heldSales, setHeldSales] = useState([]);
+  const [heldLoading, setHeldLoading] = useState(false);
+  const [isHolding, setIsHolding] = useState(false);
+  const [deleteHeldTarget, setDeleteHeldTarget] = useState(null);
+  const [isDeletingHeld, setIsDeletingHeld] = useState(false);
   const [autoPrintReceipt, setAutoPrintReceipt] = useState(() => {
     // Load from localStorage, default to true for backward compatibility
     try {
@@ -604,6 +616,126 @@ const POSScreen = () => {
     }
   };
 
+  const loadHeldSales = async () => {
+    setHeldLoading(true);
+    try {
+      const res = await transactionService.listHeld({ limit: 50 });
+      const rows = Array.isArray(res) ? res : (res.rows || []);
+      setHeldSales(rows);
+    } catch (err) {
+      console.error('Failed to load held sales', err);
+      toast.error('Failed to load held sales');
+    } finally {
+      setHeldLoading(false);
+    }
+  };
+
+  const handleHoldSale = async () => {
+    if (cart.length === 0) {
+      toast.error('Cart is empty');
+      return;
+    }
+    try {
+      setIsHolding(true);
+      const transactionId = await getTransactionId();
+      const payload = {
+        id: transactionId,
+        items: cart.map(item => ({
+          productId: item.id,
+          name: item.name,
+          category: item.category || item.category_name || 'Uncategorized',
+          price: parseFloat(item.price || 0),
+          cost: parseFloat(item.cost || 0),
+          quantity: item.quantity,
+          subtotal: parseFloat(item.price || 0) * item.quantity,
+        })),
+        subtotal: calculateSubtotal(),
+        tax: calculateTax(calculateSubtotal() - calculateDiscountAmount()),
+        total: calculateTotal(),
+        paymentMethod,
+        discountType: discount.type !== 'none' ? discount.type : null,
+        discountPercentage: discount.percentage || 0,
+        discountAmount: calculateDiscountAmount(),
+        userId: user?.id,
+        userName: user?.name,
+        userEmail: user?.email,
+        customerName: holdCustomerName.trim() || null,
+        customerPhone: holdCustomerPhone.trim() || null,
+        holdNote: holdNote.trim() || null,
+      };
+
+      await transactionService.hold(payload);
+      toast.success('Sale held. Resume anytime from "Held Sales".');
+      setCart([]);
+      setReceivedAmount('');
+      setReferenceNumber('');
+      setDiscount({ type: 'none', percentage: 0 });
+      setCustomDiscountInput('');
+      setHoldCustomerName('');
+      setHoldCustomerPhone('');
+      setHoldNote('');
+      setShowHoldModal(false);
+    } catch (err) {
+      console.error('Failed to hold sale', err);
+      toast.error(err.message || 'Failed to hold sale');
+    } finally {
+      setIsHolding(false);
+    }
+  };
+
+  const handleDeleteHeldSale = (held) => {
+    setDeleteHeldTarget(held);
+  };
+
+  const confirmDeleteHeldSale = async () => {
+    if (!deleteHeldTarget) return;
+    try {
+      setIsDeletingHeld(true);
+      await transactionService.deleteHeld(deleteHeldTarget.id);
+      toast.success('Held sale deleted');
+      setDeleteHeldTarget(null);
+      loadHeldSales();
+    } catch (err) {
+      console.error('Failed to delete held sale', err);
+      toast.error(err.message || 'Failed to delete held sale');
+    } finally {
+      setIsDeletingHeld(false);
+    }
+  };
+
+  const handleResumeHeldSale = async (held) => {
+    if (cart.length > 0) {
+      const ok = window.confirm('You have items in your cart. Resuming a held sale will replace them. Continue?');
+      if (!ok) return;
+    }
+    try {
+      const resumed = await transactionService.resume(held.id);
+      const restoredCart = (resumed.items || []).map((it) => ({
+        id: it.productId || it.product_id || it.id,
+        name: it.name,
+        price: Number(it.price || it.unit_price || 0),
+        cost: Number(it.cost || 0),
+        quantity: Number(it.quantity) || 1,
+        category_name: it.category || it.category_name,
+      }));
+      setCart(restoredCart);
+      if (resumed.paymentMethod) setPaymentMethod(resumed.paymentMethod);
+      if (resumed.discountType && resumed.discountType !== 'none') {
+        setDiscount({ type: resumed.discountType, percentage: Number(resumed.discountPercentage) || 0 });
+      }
+      setShowHeldDrawer(false);
+      toast.success('Held sale resumed');
+    } catch (err) {
+      console.error('Failed to resume held sale', err);
+      toast.error(err.message || 'Failed to resume held sale');
+    }
+  };
+
+  const openHeldDrawer = () => {
+    setShowHeldDrawer(true);
+    loadHeldSales();
+  };
+
   const handleManualBarcodeSubmit = (e) => {
     e.preventDefault();
     if (manualBarcode.trim()) {
@@ -1104,6 +1236,32 @@ const POSScreen = () => {
                 >
                   Proceed to Checkout (F9)
                 </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowHoldModal(true)}
+                    disabled={cart.length === 0}
+                    className={`py-2.5 px-3 rounded-xl font-semibold border transition-colors flex items-center justify-center gap-1.5 ${
+                      cart.length === 0
+                        ? `${colors.border.primary} ${colors.text.tertiary} cursor-not-allowed opacity-50`
+                        : `border-amber-400 dark:border-amber-500 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20`
+                    }`}
+                    title="Hold this sale"
+                  >
+                    <PauseCircleIcon className="h-5 w-5" />
+                    <span className="text-sm">Hold</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openHeldDrawer}
+                    className={`py-2.5 px-3 rounded-xl font-semibold border transition-colors flex items-center justify-center gap-1.5 ${colors.border.primary} ${colors.text.secondary} hover:${colors.text.primary} hover:${colors.bg.secondary}`}
+                    title="View held sales"
+                  >
+                    <ClockIcon className="h-5 w-5" />
+                    <span className="text-sm">Held Sales</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1256,6 +1414,7 @@ const POSScreen = () => {
         }}
         onSuccess={handleOverrideSuccess}
         actionDescription="void this item from the cart"
+        context="void_item"
       />
 
       {/* Discount Password Gate (non-admin users) */}
@@ -1267,6 +1426,7 @@ const POSScreen = () => {
           setShowDiscountModal(true);
         }}
         actionDescription="apply a discount"
+        context="apply_discount"
       />
 
       {/* Discount Selection Modal */}
@@ -1390,6 +1550,7 @@ const POSScreen = () => {
           setShowRestartConfirmation(true);
         }}
         actionDescription="restart this transaction"
+        context="restart_transaction"
       />
 
       {/* Restart Transaction Confirmation */}
@@ -1428,6 +1589,261 @@ const POSScreen = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Hold Sale Modal */}
+      {showHoldModal && (
+        <ModalPortal>
+          <div
+            className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+            onClick={() => !isHolding && setShowHoldModal(false)}
+          >
+            <div
+              className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-md`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={`px-6 py-4 border-b ${colors.border.primary} flex items-center gap-2`}>
+                <PauseCircleIcon className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+                <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Hold Sale</h3>
+              </div>
+              <div className="px-6 py-4 space-y-4">
+                <p className={`text-sm ${colors.text.secondary}`}>
+                  Park this cart so it can be resumed later. Stock will <strong>not</strong> be deducted until checkout.
+                </p>
+                <div>
+                  <label className={`block text-xs font-medium ${colors.text.secondary} mb-1`}>
+                    Customer name (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={holdCustomerName}
+                    onChange={(e) => setHoldCustomerName(e.target.value)}
+                    placeholder="e.g. Juan Dela Cruz"
+                    className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs font-medium ${colors.text.secondary} mb-1`}>
+                    Customer phone (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={holdCustomerPhone}
+                    onChange={(e) => setHoldCustomerPhone(e.target.value)}
+                    placeholder="e.g. 0917-XXX-XXXX"
+                    className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs font-medium ${colors.text.secondary} mb-1`}>
+                    Note (optional)
+                  </label>
+                  <textarea
+                    value={holdNote}
+                    onChange={(e) => setHoldNote(e.target.value)}
+                    placeholder="e.g. Customer stepped out to get cash"
+                    rows={2}
+                    className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary} resize-none`}
+                  />
+                </div>
+                <div className={`flex justify-between items-center ${colors.bg.secondary} rounded-lg p-3`}>
+                  <span className={`text-sm font-medium ${colors.text.secondary}`}>Cart total</span>
+                  <span className={`text-base font-bold ${colors.text.primary}`}>{formatCurrency(calculateTotal())}</span>
+                </div>
+              </div>
+              <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
+                <button
+                  type="button"
+                  onClick={() => setShowHoldModal(false)}
+                  disabled={isHolding}
+                  className={`px-4 py-2 rounded-lg border ${colors.border.primary} ${colors.text.secondary} hover:${colors.bg.secondary} disabled:opacity-50`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleHoldSale}
+                  disabled={isHolding}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium inline-flex items-center gap-2 disabled:opacity-50"
+                >
+                  <PauseCircleIcon className="h-5 w-5" />
+                  {isHolding ? 'Holding…' : 'Hold Sale'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
+
+      {/* Held Sales Drawer */}
+      {showHeldDrawer && (
+        <ModalPortal>
+          <div
+            className="fixed inset-0 bg-black/50 flex justify-end z-50"
+            onClick={() => setShowHeldDrawer(false)}
+          >
+            <div
+              className={`${colors.card.primary} w-full max-w-md h-full shadow-2xl border-l ${colors.border.primary} flex flex-col`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={`px-6 py-4 border-b ${colors.border.primary} flex items-center justify-between`}>
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-gradient-to-br from-amber-500 to-amber-700 rounded-xl text-white">
+                    <ClockIcon className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Held Sales</h3>
+                    <p className={`text-xs ${colors.text.secondary}`}>{heldSales.length} parked</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowHeldDrawer(false)}
+                  className={`p-2 rounded-lg ${colors.text.tertiary} hover:${colors.text.primary} hover:${colors.bg.secondary}`}
+                >
+                  <XMarkIcon className="h-6 w-6" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {heldLoading ? (
+                  <div className="py-16 text-center">
+                    <div className="animate-spin rounded-full h-10 w-10 border-4 border-amber-500/30 border-t-amber-500 mx-auto mb-3" />
+                    <p className={colors.text.secondary}>Loading held sales…</p>
+                  </div>
+                ) : heldSales.length === 0 ? (
+                  <EmptyState
+                    icon={PauseCircleIcon}
+                    title="No held sales"
+                    description="Sales you hold will appear here and can be resumed anytime."
+                  />
+                ) : heldSales.map((h) => {
+                  let items = [];
+                  try { items = typeof h.items === 'string' ? JSON.parse(h.items) : (h.items || []); } catch { items = []; }
+                  const itemCount = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+                  return (
+                    <div
+                      key={h.id}
+                      className={`${colors.bg.secondary} rounded-xl p-4 border ${colors.border.primary}`}
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div>
+                          <p className={`font-semibold ${colors.text.primary} text-sm`}>
+                            {h.customer_name || 'Unnamed customer'}
+                          </p>
+                          {h.customer_phone && (
+                            <p className={`text-xs ${colors.text.tertiary} flex items-center gap-1 mt-0.5`}>
+                              <UserIcon className="h-3 w-3" /> {h.customer_phone}
+                            </p>
+                          )}
+                          <p className={`text-xs font-mono ${colors.text.tertiary} mt-0.5`}>{h.id}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`font-bold ${colors.text.primary}`}>{formatCurrency(h.total)}</p>
+                          <p className={`text-xs ${colors.text.tertiary}`}>{itemCount} items</p>
+                        </div>
+                      </div>
+                      <p className={`text-xs ${colors.text.tertiary} mb-3`}>
+                        Held {new Date(h.timestamp || h.created_at).toLocaleString()}
+                      </p>
+                      <div className="grid grid-cols-[1fr_auto] gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleResumeHeldSale(h)}
+                          className="py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 text-sm"
+                        >
+                          <PlayCircleIcon className="h-5 w-5" />
+                          Resume
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteHeldSale(h)}
+                          className="py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold flex items-center justify-center gap-1 text-sm"
+                          title="Delete held sale"
+                          aria-label="Delete held sale"
+                        >
+                          <TrashIcon className="h-5 w-5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
+
+      {/* Delete Held Sale Confirmation Modal */}
+      {deleteHeldTarget && (
+        <ModalPortal>
+          <div
+            className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+            onClick={() => !isDeletingHeld && setDeleteHeldTarget(null)}
+          >
+            <div
+              className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-md`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={`px-6 py-4 border-b ${colors.border.primary} flex items-center gap-3`}>
+                <div className="p-2 rounded-lg bg-rose-100 dark:bg-rose-900/30">
+                  <TrashIcon className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+                </div>
+                <div>
+                  <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Delete Held Sale</h3>
+                  <p className={`text-xs ${colors.text.tertiary}`}>This action cannot be undone.</p>
+                </div>
+              </div>
+
+              <div className="px-6 py-5 space-y-4">
+                <p className={`text-sm ${colors.text.secondary}`}>
+                  Are you sure you want to delete this held sale? No stock will be affected.
+                </p>
+
+                <div className={`${colors.bg.secondary} rounded-xl p-4 border ${colors.border.primary} space-y-2`}>
+                  <div className="flex justify-between items-start gap-4">
+                    <div>
+                      <p className={`font-semibold ${colors.text.primary} text-sm`}>
+                        {deleteHeldTarget.customer_name || 'Unnamed customer'}
+                      </p>
+                      {deleteHeldTarget.customer_phone && (
+                        <p className={`text-xs ${colors.text.tertiary} flex items-center gap-1 mt-0.5`}>
+                          <UserIcon className="h-3 w-3" /> {deleteHeldTarget.customer_phone}
+                        </p>
+                      )}
+                      <p className={`text-xs font-mono ${colors.text.tertiary} mt-1`}>{deleteHeldTarget.id}</p>
+                    </div>
+                    <p className={`font-bold ${colors.text.primary} whitespace-nowrap`}>
+                      {formatCurrency(deleteHeldTarget.total)}
+                    </p>
+                  </div>
+                  <p className={`text-xs ${colors.text.tertiary}`}>
+                    Held {new Date(deleteHeldTarget.timestamp || deleteHeldTarget.created_at).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
+                <button
+                  type="button"
+                  onClick={() => setDeleteHeldTarget(null)}
+                  disabled={isDeletingHeld}
+                  className={`px-4 py-2 rounded-lg border ${colors.border.primary} ${colors.text.secondary} hover:${colors.bg.secondary} disabled:opacity-50`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteHeldSale}
+                  disabled={isDeletingHeld}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-medium inline-flex items-center gap-2 disabled:opacity-50"
+                >
+                  <TrashIcon className="h-5 w-5" />
+                  {isDeletingHeld ? 'Deleting…' : 'Delete Held Sale'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
       )}
     </div>
   );
