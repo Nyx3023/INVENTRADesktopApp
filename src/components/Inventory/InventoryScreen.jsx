@@ -251,7 +251,6 @@ const InventoryScreen = () => {
 
       const updatedProducts = products.filter(p => !selectedProducts.includes(p.id));
       setProducts(updatedProducts);
-      checkLowStock(updatedProducts);
 
       // Refresh barcode context products for scanning
       refreshBarcodeProducts();
@@ -1715,6 +1714,55 @@ const InventoryScreen = () => {
               >
                 <ScaleIcon className="h-5 w-5" />
                 Submit Adjustment
+              </button>
+            </div>
+          </div>
+        </div>
+        </ModalPortal>
+      )}
+
+      {/* Single Product Delete Confirmation Modal */}
+      {productToDelete && (
+        <ModalPortal>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setProductToDelete(null)}>
+          <div
+            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-md`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
+              <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Delete Product</h3>
+              <p className={`text-sm ${colors.text.secondary} mt-1`}>
+                Are you sure you want to delete this product?
+              </p>
+            </div>
+
+            <div className="px-6 py-4">
+              <div className={`p-4 rounded-lg ${colors.bg.secondary} mb-4`}>
+                <p className={`text-sm font-medium ${colors.text.primary}`}>
+                  {productToDelete.name}
+                </p>
+              </div>
+
+              <div className={`p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800`}>
+                <p className={`text-sm text-amber-800 dark:text-amber-300`}>
+                  <strong>Note:</strong> Deleted products will be removed from your inventory. Products that have been used in transactions will be marked as deleted but preserved for record keeping.
+                </p>
+              </div>
+            </div>
+
+            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
+              <button
+                onClick={() => setProductToDelete(null)}
+                className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteProduct}
+                className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 inline-flex items-center gap-2"
+              >
+                <TrashIcon className="h-5 w-5" />
+                Delete Product
               </button>
             </div>
           </div>
