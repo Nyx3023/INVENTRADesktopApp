@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -15,8 +15,26 @@ import { Line, Bar, Pie, Doughnut } from 'react-chartjs-2';
 import { transactionService, productService } from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { formatCurrency } from '../../utils/formatters';
-import { CalendarIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon, ShoppingBagIcon, CurrencyDollarIcon, ChartBarIcon } from '@heroicons/react/24/outline';
+import {
+  CalendarIcon,
+  ArrowTrendingUpIcon,
+  ArrowTrendingDownIcon,
+  ShoppingBagIcon,
+  CurrencyDollarIcon,
+  ChartBarIcon,
+  ArrowDownTrayIcon,
+  ArchiveBoxXMarkIcon,
+  Squares2X2Icon,
+} from '@heroicons/react/24/outline';
 import { toast } from 'react-hot-toast';
+import {
+  exportSalesSummaryToExcel,
+  exportTopProductsToExcel,
+  exportCategoryPerformanceToExcel,
+  exportDeadStockToExcel,
+  exportAbcAnalysisToExcel,
+} from '../../utils/exportUtils';
+import ModalPortal from '../common/ModalPortal';
 
 ChartJS.register(
   CategoryScale,
@@ -29,6 +47,45 @@ ChartJS.register(
   Legend,
   ArcElement
 );
+
+const computeDeadStock = (transactions, products, daysThreshold) => {
+  const lastSold = new Map();
+  const totalSold = new Map();
+
+  (transactions || []).forEach(t => {
+    if (!t || !t.timestamp) return;
+    const date = new Date(t.timestamp);
+    (t.items || []).forEach(item => {
+      const id = item.productId || item.product_id || item.name;
+      const qty = Number(item.quantity) || 0;
+      if (!id) return;
+      if (!lastSold.has(id) || date > lastSold.get(id)) lastSold.set(id, date);
+      totalSold.set(id, (totalSold.get(id) || 0) + qty);
+    });
+  });
+
+  const cutoffMs = Date.now() - daysThreshold * 24 * 60 * 60 * 1000;
+
+  return (products || [])
+    .filter(p => Number(p.quantity) > 0)
+    .map(p => {
+      const last = lastSold.get(p.id) || lastSold.get(p.name) || null;
+      const daysSinceLastSale = last ? Math.floor((Date.now() - last.getTime()) / (1000 * 60 * 60 * 24)) : null;
+      const cost = Number(p.cost) || 0;
+      const price = Number(p.price) || 0;
+      const qty = Number(p.quantity) || 0;
+      return {
+        ...p,
+        lastSold: last,
+        daysSinceLastSale,
+        totalSold: totalSold.get(p.id) || totalSold.get(p.name) || 0,
+        tiedUpCost: cost * qty,
+        tiedUpRetail: price * qty,
+      };
+    })
+    .filter(p => !p.lastSold || (p.lastSold instanceof Date && p.lastSold.getTime() < cutoffMs))
+    .sort((a, b) => (b.tiedUpRetail || 0) - (a.tiedUpRetail || 0));
+};
 
 const StatisticalReportsScreen = () => {
   const { colors } = useTheme();
@@ -63,11 +120,30 @@ const StatisticalReportsScreen = () => {
     quarterly: false,
     yearly: false
   });
+  const [allProducts, setAllProducts] = useState([]);
+  const [deadStockDays, setDeadStockDays] = useState(60);
+  const [deadStock, setDeadStock] = useState([]);
+  const [abcAnalysis, setAbcAnalysis] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportReportType, setExportReportType] = useState('sales_summary');
+  const [exportModalDeadStockDays, setExportModalDeadStockDays] = useState(60);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const deadStockForModalExport = useMemo(
+    () => computeDeadStock(transactions, allProducts, exportModalDeadStockDays),
+    [transactions, allProducts, exportModalDeadStockDays]
+  );
 
   useEffect(() => {
     loadAnalyticsData();
   }, [selectedPeriod]);
+
+  useEffect(() => {
+    if (allProducts.length || transactions.length) {
+      setDeadStock(computeDeadStock(transactions, allProducts, deadStockDays));
+    }
+  }, [deadStockDays, allProducts, transactions]);
 
   const loadAnalyticsData = async () => {
     try {
@@ -80,6 +156,7 @@ const StatisticalReportsScreen = () => {
       ]);
 
       setTransactions(transactionsData || []);
+      setAllProducts(productsData || []);
 
       // Process analytics data
       processAnalyticsData(transactionsData || [], productsData || []);
@@ -117,6 +194,133 @@ const StatisticalReportsScreen = () => {
     // Calculate sales growth
     const growthData = calculateSalesGrowth(transactions, now);
     setSalesGrowth(growthData);
+
+    // Dead stock (lifetime sales — independent of selected period)
+    setDeadStock(computeDeadStock(transactions, products, deadStockDays));
+
+    // ABC analysis based on the selected period
+    setAbcAnalysis(calculateAbcAnalysis(transactions, selectedPeriod, now));
+  };
+
+  const calculateAbcAnalysis = (transactions, period, now) => {
+    const days = period === 'weekly' ? 7 : period === 'monthly' ? 30
+      : period === 'quarterly' ? 90 : 365;
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - days);
+    const cutoffString = cutoff.getFullYear() + '-' +
+      String(cutoff.getMonth() + 1).padStart(2, '0') + '-' +
+      String(cutoff.getDate()).padStart(2, '0');
+
+    const relevant = (transactions || []).filter(t => {
+      if (!t.timestamp) return false;
+      const d = new Date(t.timestamp);
+      const ds = d.getFullYear() + '-' +
+        String(d.getMonth() + 1).padStart(2, '0') + '-' +
+        String(d.getDate()).padStart(2, '0');
+      return ds >= cutoffString;
+    });
+
+    const productAgg = {};
+    relevant.forEach(t => {
+      (t.items || []).forEach(item => {
+        const key = item.productId || item.product_id || item.name;
+        if (!key) return;
+        if (!productAgg[key]) {
+          productAgg[key] = { id: key, name: item.name, revenue: 0, quantity: 0 };
+        }
+        const qty = Number(item.quantity) || 0;
+        const price = Number(item.price) || 0;
+        const subtotal = Number(item.subtotal) || price * qty;
+        productAgg[key].revenue += subtotal;
+        productAgg[key].quantity += qty;
+      });
+    });
+
+    const sorted = Object.values(productAgg).sort((a, b) => b.revenue - a.revenue);
+    const totalRevenue = sorted.reduce((sum, p) => sum + p.revenue, 0);
+
+    let cumulative = 0;
+    return sorted.map((p, idx) => {
+      cumulative += p.revenue;
+      const sharePct = totalRevenue > 0 ? (p.revenue / totalRevenue) * 100 : 0;
+      const cumulativePct = totalRevenue > 0 ? (cumulative / totalRevenue) * 100 : 0;
+      let bucket = 'C';
+      if (cumulativePct <= 80) bucket = 'A';
+      else if (cumulativePct <= 95) bucket = 'B';
+      return { ...p, rank: idx + 1, sharePct, cumulativePct, bucket };
+    });
+  };
+
+  const openExportModal = () => {
+    setExportReportType('sales_summary');
+    setExportModalDeadStockDays(deadStockDays);
+    setShowExportModal(true);
+  };
+
+  const confirmExportFromModal = () => {
+    const labelFor = {
+      sales_summary: 'Sales summary',
+      top_products: 'Top products',
+      category_performance: 'Category performance',
+      dead_stock: 'Dead stock',
+      abc_analysis: 'ABC analysis',
+    };
+    const label = labelFor[exportReportType] || 'Report';
+
+    const canExport =
+      exportReportType === 'sales_summary' ||
+      (exportReportType === 'top_products' && topProducts.length > 0) ||
+      (exportReportType === 'category_performance' && categoryDistribution.length > 0) ||
+      (exportReportType === 'dead_stock' && deadStockForModalExport.length > 0) ||
+      (exportReportType === 'abc_analysis' && abcAnalysis.length > 0);
+
+    if (!canExport) {
+      toast.error('Nothing to export for this report.');
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      let filename;
+      switch (exportReportType) {
+        case 'sales_summary':
+          filename = exportSalesSummaryToExcel({
+            salesData,
+            revenueData,
+            salesGrowth,
+            salesTrend,
+            period: selectedPeriod,
+          });
+          break;
+        case 'top_products':
+          filename = exportTopProductsToExcel({ topProducts, period: selectedPeriod });
+          break;
+        case 'category_performance':
+          filename = exportCategoryPerformanceToExcel({ categoryDistribution, period: selectedPeriod });
+          break;
+        case 'dead_stock':
+          filename = exportDeadStockToExcel({
+            deadStock: deadStockForModalExport,
+            daysThreshold: exportModalDeadStockDays,
+            period: selectedPeriod,
+          });
+          break;
+        case 'abc_analysis':
+          filename = exportAbcAnalysisToExcel({ abcAnalysis, period: selectedPeriod });
+          break;
+        default:
+          toast.error('Unknown report type');
+          setIsExporting(false);
+          return;
+      }
+      toast.success(`Exported ${label} → ${filename}`);
+      setShowExportModal(false);
+    } catch (err) {
+      console.error(`Failed to export ${label}:`, err);
+      toast.error(`Failed to export ${label}`);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const calculateRevenueMetrics = (transactions, period, now) => {
@@ -509,12 +713,58 @@ const StatisticalReportsScreen = () => {
   }
 
 
+  const exportModalDisabled =
+    (exportReportType === 'top_products' && topProducts.length === 0) ||
+    (exportReportType === 'category_performance' && categoryDistribution.length === 0) ||
+    (exportReportType === 'dead_stock' && deadStockForModalExport.length === 0) ||
+    (exportReportType === 'abc_analysis' && abcAnalysis.length === 0);
+
+  const periodLabels = { weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly' };
+
+  const exportTypeOptions = [
+    {
+      id: 'sales_summary',
+      title: 'Sales summary',
+      description: 'KPI cards, revenue / cost / profit, growth vs prior period, and daily sales trend.',
+    },
+    {
+      id: 'top_products',
+      title: 'Top products',
+      description: `All ranked products (units and revenue) for the current ${periodLabels[selectedPeriod] || selectedPeriod} view.`,
+    },
+    {
+      id: 'category_performance',
+      title: 'Category performance',
+      description: `Sales and share by category for the current ${periodLabels[selectedPeriod] || selectedPeriod} view.`,
+    },
+    {
+      id: 'dead_stock',
+      title: 'Dead stock',
+      description: 'In-stock SKUs with no sales since the idle threshold you set below.',
+    },
+    {
+      id: 'abc_analysis',
+      title: 'ABC analysis',
+      description: `Pareto classification by revenue for the current ${periodLabels[selectedPeriod] || selectedPeriod} view.`,
+    },
+  ];
+
   return (
+    <>
     <div className="h-full space-y-6 overflow-y-auto">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center flex-wrap gap-4">
         <h1 className={`text-2xl font-bold ${colors.text.primary}`}>Reports</h1>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={openExportModal}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium"
+            title="Choose a report type and download Excel"
+          >
+            <ArrowDownTrayIcon className="h-4 w-4" />
+            Export Sales Summary
+          </button>
           <select
             className={`border rounded-lg px-3 py-2 ${colors.input.primary}`}
             value={selectedPeriod}
@@ -737,7 +987,299 @@ const StatisticalReportsScreen = () => {
           </div>
         </div>
       </div>
+
+      {/* Dead Stock Report */}
+      <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-900/30">
+              <ArchiveBoxXMarkIcon className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div>
+              <h2 className={`text-lg font-semibold ${colors.text.primary}`}>Dead Stock</h2>
+              <p className={`text-xs ${colors.text.tertiary}`}>
+                In-stock products with no sales in the selected window.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className={`text-xs ${colors.text.secondary}`} htmlFor="dead-stock-days">Threshold</label>
+            <select
+              id="dead-stock-days"
+              className={`border rounded-lg px-3 py-1.5 text-sm ${colors.input.primary}`}
+              value={deadStockDays}
+              onChange={(e) => setDeadStockDays(Number(e.target.value))}
+            >
+              <option value={30}>30 days</option>
+              <option value={60}>60 days</option>
+              <option value={90}>90 days</option>
+              <option value={180}>180 days</option>
+              <option value={365}>365 days</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Summary cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <div className={`${colors.bg.secondary} rounded-lg p-3 border ${colors.border.primary}`}>
+            <p className={`text-xs ${colors.text.tertiary}`}>Items</p>
+            <p className={`text-lg font-bold ${colors.text.primary}`}>{deadStock.length}</p>
+          </div>
+          <div className={`${colors.bg.secondary} rounded-lg p-3 border ${colors.border.primary}`}>
+            <p className={`text-xs ${colors.text.tertiary}`}>Units on hand</p>
+            <p className={`text-lg font-bold ${colors.text.primary}`}>
+              {deadStock.reduce((s, p) => s + (Number(p.quantity) || 0), 0).toLocaleString()}
+            </p>
+          </div>
+          <div className={`${colors.bg.secondary} rounded-lg p-3 border ${colors.border.primary}`}>
+            <p className={`text-xs ${colors.text.tertiary}`}>Tied-up cost</p>
+            <p className={`text-lg font-bold ${colors.text.primary}`}>
+              {formatCurrency(deadStock.reduce((s, p) => s + (Number(p.tiedUpCost) || 0), 0))}
+            </p>
+          </div>
+          <div className={`${colors.bg.secondary} rounded-lg p-3 border ${colors.border.primary}`}>
+            <p className={`text-xs ${colors.text.tertiary}`}>Tied-up retail</p>
+            <p className={`text-lg font-bold ${colors.text.primary}`}>
+              {formatCurrency(deadStock.reduce((s, p) => s + (Number(p.tiedUpRetail) || 0), 0))}
+            </p>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className={`min-w-full divide-y ${colors.border.primary}`}>
+            <thead className={`${colors.bg.secondary}`}>
+              <tr>
+                <th className={`px-4 py-2 text-left text-xs font-medium ${colors.text.secondary} uppercase`}>Product</th>
+                <th className={`px-4 py-2 text-left text-xs font-medium ${colors.text.secondary} uppercase`}>Category</th>
+                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Qty</th>
+                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Tied-up Cost</th>
+                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Tied-up Retail</th>
+                <th className={`px-4 py-2 text-left text-xs font-medium ${colors.text.secondary} uppercase`}>Last Sold</th>
+                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Days Idle</th>
+              </tr>
+            </thead>
+            <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
+              {deadStock.length === 0 && (
+                <tr>
+                  <td colSpan={7} className={`px-4 py-6 text-center text-sm ${colors.text.tertiary}`}>
+                    No dead stock detected for this threshold.
+                  </td>
+                </tr>
+              )}
+              {deadStock.slice(0, 25).map((p) => (
+                <tr key={p.id}>
+                  <td className={`px-4 py-2 text-sm font-medium ${colors.text.primary}`}>{p.name}</td>
+                  <td className={`px-4 py-2 text-sm ${colors.text.secondary}`}>{p.category_name || '—'}</td>
+                  <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{p.quantity}</td>
+                  <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{formatCurrency(p.tiedUpCost)}</td>
+                  <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{formatCurrency(p.tiedUpRetail)}</td>
+                  <td className={`px-4 py-2 text-sm ${colors.text.secondary}`}>
+                    {p.lastSold ? new Date(p.lastSold).toLocaleDateString() : 'Never'}
+                  </td>
+                  <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>
+                    {p.daysSinceLastSale === null ? '—' : p.daysSinceLastSale}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {deadStock.length > 25 && (
+            <p className={`text-xs ${colors.text.tertiary} mt-2`}>
+              Showing 25 of {deadStock.length} items — export to Excel to see the full list.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* ABC Analysis */}
+      <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-lg bg-indigo-100 dark:bg-indigo-900/30">
+              <Squares2X2Icon className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+            </div>
+            <div>
+              <h2 className={`text-lg font-semibold ${colors.text.primary}`}>ABC Analysis</h2>
+              <p className={`text-xs ${colors.text.tertiary}`}>
+                Pareto classification by revenue for the {selectedPeriod} period.
+                A = top ~80%, B = next ~15%, C = bottom ~5%.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Class summary */}
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {['A', 'B', 'C'].map(bucket => {
+            const items = abcAnalysis.filter(p => p.bucket === bucket);
+            const revenue = items.reduce((s, p) => s + Number(p.revenue || 0), 0);
+            const totalRevenue = abcAnalysis.reduce((s, p) => s + Number(p.revenue || 0), 0);
+            const share = totalRevenue > 0 ? (revenue / totalRevenue) * 100 : 0;
+            const tone = bucket === 'A'
+              ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+              : bucket === 'B'
+                ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+                : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300';
+            return (
+              <div key={bucket} className={`${colors.bg.secondary} rounded-lg p-3 border ${colors.border.primary}`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${tone}`}>Class {bucket}</span>
+                  <span className={`text-xs ${colors.text.tertiary}`}>{items.length} items</span>
+                </div>
+                <p className={`text-base font-bold ${colors.text.primary}`}>{formatCurrency(revenue)}</p>
+                <p className={`text-xs ${colors.text.tertiary}`}>{share.toFixed(1)}% of revenue</p>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className={`min-w-full divide-y ${colors.border.primary}`}>
+            <thead className={`${colors.bg.secondary}`}>
+              <tr>
+                <th className={`px-4 py-2 text-left text-xs font-medium ${colors.text.secondary} uppercase`}>Rank</th>
+                <th className={`px-4 py-2 text-left text-xs font-medium ${colors.text.secondary} uppercase`}>Product</th>
+                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Units</th>
+                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Revenue</th>
+                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Share %</th>
+                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Cumulative %</th>
+                <th className={`px-4 py-2 text-center text-xs font-medium ${colors.text.secondary} uppercase`}>Class</th>
+              </tr>
+            </thead>
+            <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
+              {abcAnalysis.length === 0 && (
+                <tr>
+                  <td colSpan={7} className={`px-4 py-6 text-center text-sm ${colors.text.tertiary}`}>
+                    No sales data for this period.
+                  </td>
+                </tr>
+              )}
+              {abcAnalysis.slice(0, 25).map((p) => {
+                const tone = p.bucket === 'A'
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                  : p.bucket === 'B'
+                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                    : 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300';
+                return (
+                  <tr key={p.id}>
+                    <td className={`px-4 py-2 text-sm ${colors.text.secondary}`}>{p.rank}</td>
+                    <td className={`px-4 py-2 text-sm font-medium ${colors.text.primary}`}>{p.name}</td>
+                    <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{p.quantity}</td>
+                    <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{formatCurrency(p.revenue)}</td>
+                    <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{p.sharePct.toFixed(1)}%</td>
+                    <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{p.cumulativePct.toFixed(1)}%</td>
+                    <td className="px-4 py-2 text-sm text-center">
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${tone}`}>{p.bucket}</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {abcAnalysis.length > 25 && (
+            <p className={`text-xs ${colors.text.tertiary} mt-2`}>
+              Showing 25 of {abcAnalysis.length} products — export to Excel to see the full list.
+            </p>
+          )}
+        </div>
+      </div>
     </div>
+
+    {showExportModal && (
+      <ModalPortal>
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+          onClick={() => !isExporting && setShowExportModal(false)}
+        >
+          <div
+            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`px-6 py-4 border-b ${colors.border.primary} flex items-start gap-3`}>
+              <div className="p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
+                <ArrowDownTrayIcon className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <div>
+                <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Export to Excel</h3>
+                <p className={`text-xs ${colors.text.tertiary} mt-0.5`}>
+                  Pick a report. Top products, categories, and ABC use the chart period:{' '}
+                  <span className="font-medium">{periodLabels[selectedPeriod] || selectedPeriod}</span>.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 overflow-y-auto flex-1 space-y-3">
+              {exportTypeOptions.map((opt) => (
+                <label
+                  key={opt.id}
+                  className={`flex gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                    exportReportType === opt.id
+                      ? `border-emerald-500/60 ${colors.bg.secondary}`
+                      : `${colors.border.primary} hover:bg-slate-50 dark:hover:bg-slate-800/50`
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="export-report-type"
+                    className="mt-1"
+                    checked={exportReportType === opt.id}
+                    onChange={() => setExportReportType(opt.id)}
+                  />
+                  <div>
+                    <p className={`text-sm font-medium ${colors.text.primary}`}>{opt.title}</p>
+                    <p className={`text-xs ${colors.text.tertiary} mt-0.5`}>{opt.description}</p>
+                  </div>
+                </label>
+              ))}
+
+              {exportReportType === 'dead_stock' && (
+                <div className={`pt-2 border-t ${colors.border.primary}`}>
+                  <label className={`text-xs font-medium ${colors.text.secondary}`} htmlFor="export-modal-dead-days">
+                    Idle threshold (no sales in this window)
+                  </label>
+                  <select
+                    id="export-modal-dead-days"
+                    className={`mt-1.5 border rounded-lg px-3 py-2 text-sm w-full ${colors.input.primary}`}
+                    value={exportModalDeadStockDays}
+                    onChange={(e) => setExportModalDeadStockDays(Number(e.target.value))}
+                  >
+                    <option value={30}>30 days</option>
+                    <option value={60}>60 days</option>
+                    <option value={90}>90 days</option>
+                    <option value={180}>180 days</option>
+                    <option value={365}>365 days</option>
+                  </select>
+                  <p className={`text-xs ${colors.text.tertiary} mt-1.5`}>
+                    {deadStockForModalExport.length} item(s) match this threshold for export.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                disabled={isExporting}
+                className={`px-4 py-2 rounded-lg border ${colors.border.primary} ${colors.text.secondary} disabled:opacity-50`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmExportFromModal}
+                disabled={isExporting || exportModalDisabled}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium inline-flex items-center gap-2 disabled:opacity-50"
+              >
+                <ArrowDownTrayIcon className="h-4 w-4" />
+                {isExporting ? 'Exporting…' : 'Download .xlsx'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </ModalPortal>
+    )}
+    </>
   );
 };
 

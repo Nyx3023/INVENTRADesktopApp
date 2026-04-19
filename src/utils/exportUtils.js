@@ -1280,6 +1280,281 @@ export const downloadImportTemplate = (filename = 'Import_Products_Template.xlsx
   return filename;
 };
 
+/* -------------------------------------------------------------------------- */
+/* Reports - Per-section Excel exporters                                      */
+/* -------------------------------------------------------------------------- */
+
+const periodToLabel = (period) => {
+  switch ((period || '').toLowerCase()) {
+    case 'weekly': return 'Last 7 days';
+    case 'monthly': return 'Last 30 days';
+    case 'quarterly': return 'Last 90 days';
+    case 'yearly': return 'Last 365 days';
+    default: return period || '—';
+  }
+};
+
+const buildMetadataSheet = (title, period, extra = []) => {
+  const storeInfo = getStoreInfo();
+  const rows = [
+    [title],
+    [''],
+    ['Generated', new Date().toLocaleString()],
+    ['Store', storeInfo.storeName || ''],
+    ['Period', periodToLabel(period)],
+  ];
+  if (Array.isArray(extra) && extra.length) {
+    rows.push(['']);
+    extra.forEach(([label, value]) => rows.push([label, value]));
+  }
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet['!cols'] = [{ wch: 22 }, { wch: 32 }];
+  return sheet;
+};
+
+const safeFilename = (name) => String(name || 'report').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_');
+
+const buildFilename = (slug, period) => {
+  const ts = new Date();
+  const stamp = `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}-${String(ts.getDate()).padStart(2, '0')}_${String(ts.getHours()).padStart(2, '0')}${String(ts.getMinutes()).padStart(2, '0')}`;
+  return `${safeFilename(slug)}_${(period || 'all')}_${stamp}.xlsx`;
+};
+
+/**
+ * Export the Sales summary panel (KPIs + revenue/cost/profit + sales trend).
+ */
+export const exportSalesSummaryToExcel = ({ salesData = {}, revenueData = {}, salesGrowth = {}, salesTrend = [], period = 'monthly' } = {}) => {
+  const workbook = XLSX.utils.book_new();
+
+  const formatGrowthCell = (value) => (value === null || value === undefined) ? 'N/A' : `${value > 0 ? '+' : ''}${Number(value).toFixed(1)}%`;
+
+  const summaryRows = [
+    ['Metric', 'Value'],
+    ['Daily Sales', Number(salesData.daily || 0).toFixed(2)],
+    ['Weekly Sales', Number(salesData.weekly || 0).toFixed(2)],
+    ['Monthly Sales', Number(salesData.monthly || 0).toFixed(2)],
+    ['Quarterly Sales', Number(salesData.quarterly || 0).toFixed(2)],
+    ['Yearly Sales', Number(salesData.yearly || 0).toFixed(2)],
+    [''],
+    ['Revenue', Number(revenueData.revenue || 0).toFixed(2)],
+    ['Cost of Goods Sold', Number(revenueData.cost || 0).toFixed(2)],
+    ['Gross Profit', Number(revenueData.profit || 0).toFixed(2)],
+    ['Profit Margin (%)', Number(revenueData.margin || 0).toFixed(2)],
+    ['Items Sold', Number(revenueData.itemsSold || 0)],
+    [''],
+    ['Growth vs previous period', ''],
+    ['Weekly Growth', formatGrowthCell(salesGrowth.weekly)],
+    ['Monthly Growth', formatGrowthCell(salesGrowth.monthly)],
+    ['Quarterly Growth', formatGrowthCell(salesGrowth.quarterly)],
+    ['Yearly Growth', formatGrowthCell(salesGrowth.yearly)],
+  ];
+  const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+  summarySheet['!cols'] = [{ wch: 28 }, { wch: 18 }];
+
+  const trendRows = [['Date', 'Sales']];
+  salesTrend.forEach(t => trendRows.push([t.date || t.label || '', Number(t.amount || t.value || 0).toFixed(2)]));
+  const trendSheet = XLSX.utils.aoa_to_sheet(trendRows);
+  trendSheet['!cols'] = [{ wch: 18 }, { wch: 16 }];
+
+  XLSX.utils.book_append_sheet(workbook, buildMetadataSheet('Sales Summary Report', period), 'Metadata');
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+  XLSX.utils.book_append_sheet(workbook, trendSheet, 'Sales Trend');
+
+  const filename = buildFilename('sales_summary', period);
+  XLSX.writeFile(workbook, filename);
+  return filename;
+};
+
+/**
+ * Export the Top Products table.
+ */
+export const exportTopProductsToExcel = ({ topProducts = [], period = 'monthly' } = {}) => {
+  const workbook = XLSX.utils.book_new();
+
+  const rows = [['Rank', 'Product', 'Units Sold', 'Revenue']];
+  topProducts.forEach((p, idx) => rows.push([
+    idx + 1,
+    p.name || '—',
+    Number(p.quantity || 0),
+    Number(p.revenue || 0).toFixed(2),
+  ]));
+
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet['!cols'] = [{ wch: 6 }, { wch: 36 }, { wch: 12 }, { wch: 16 }];
+
+  XLSX.utils.book_append_sheet(workbook, buildMetadataSheet('Top Products Report', period, [['Rows', topProducts.length]]), 'Metadata');
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Top Products');
+
+  const filename = buildFilename('top_products', period);
+  XLSX.writeFile(workbook, filename);
+  return filename;
+};
+
+/**
+ * Export the Category Performance table.
+ */
+export const exportCategoryPerformanceToExcel = ({ categoryDistribution = [], period = 'monthly' } = {}) => {
+  const workbook = XLSX.utils.book_new();
+
+  const totalSales = categoryDistribution.reduce((sum, c) => sum + Number(c.sales || 0), 0);
+  const rows = [['Category', 'Sales', 'Share (%)']];
+  categoryDistribution.forEach(c => {
+    const sales = Number(c.sales || 0);
+    const share = totalSales > 0 ? (sales / totalSales) * 100 : 0;
+    rows.push([c.category || '—', sales.toFixed(2), share.toFixed(2)]);
+  });
+  rows.push(['']);
+  rows.push(['Total', totalSales.toFixed(2), '100.00']);
+
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet['!cols'] = [{ wch: 28 }, { wch: 16 }, { wch: 12 }];
+
+  XLSX.utils.book_append_sheet(workbook, buildMetadataSheet('Category Performance Report', period, [['Total Sales', totalSales.toFixed(2)]]), 'Metadata');
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Categories');
+
+  const filename = buildFilename('category_performance', period);
+  XLSX.writeFile(workbook, filename);
+  return filename;
+};
+
+/**
+ * Export the Dead Stock table.
+ */
+export const exportDeadStockToExcel = ({ deadStock = [], daysThreshold = 60, period = 'all' } = {}) => {
+  const workbook = XLSX.utils.book_new();
+
+  const rows = [[
+    'Product',
+    'Category',
+    'Quantity on Hand',
+    'Cost Price',
+    'Selling Price',
+    'Tied-up Cost',
+    'Tied-up Retail',
+    'Last Sold',
+    'Days Since Last Sale',
+    'Total Units Sold (lifetime)',
+  ]];
+
+  let totalCost = 0;
+  let totalRetail = 0;
+  deadStock.forEach(p => {
+    const tiedCost = Number(p.tiedUpCost || 0);
+    const tiedRetail = Number(p.tiedUpRetail || 0);
+    totalCost += tiedCost;
+    totalRetail += tiedRetail;
+    rows.push([
+      p.name || '—',
+      p.category_name || p.category || '—',
+      Number(p.quantity || 0),
+      Number(p.cost || 0).toFixed(2),
+      Number(p.price || 0).toFixed(2),
+      tiedCost.toFixed(2),
+      tiedRetail.toFixed(2),
+      p.lastSold ? new Date(p.lastSold).toLocaleDateString() : 'Never',
+      p.daysSinceLastSale === null || p.daysSinceLastSale === undefined ? 'N/A' : p.daysSinceLastSale,
+      Number(p.totalSold || 0),
+    ]);
+  });
+
+  rows.push(['']);
+  rows.push(['Totals', '', '', '', '', totalCost.toFixed(2), totalRetail.toFixed(2), '', '', '']);
+
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet['!cols'] = [
+    { wch: 32 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 14 },
+    { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 18 },
+  ];
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildMetadataSheet('Dead Stock Report', period, [
+      ['Threshold (days)', daysThreshold],
+      ['Items', deadStock.length],
+      ['Total Tied-up Cost', totalCost.toFixed(2)],
+      ['Total Tied-up Retail', totalRetail.toFixed(2)],
+    ]),
+    'Metadata'
+  );
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Dead Stock');
+
+  const filename = buildFilename(`dead_stock_${daysThreshold}d`, period);
+  XLSX.writeFile(workbook, filename);
+  return filename;
+};
+
+/**
+ * Export the ABC Analysis table.
+ */
+export const exportAbcAnalysisToExcel = ({ abcAnalysis = [], period = 'monthly' } = {}) => {
+  const workbook = XLSX.utils.book_new();
+
+  const rows = [[
+    'Rank',
+    'Product',
+    'Units Sold',
+    'Revenue',
+    'Revenue Share (%)',
+    'Cumulative Share (%)',
+    'Class',
+  ]];
+
+  abcAnalysis.forEach(p => {
+    rows.push([
+      p.rank,
+      p.name || '—',
+      Number(p.quantity || 0),
+      Number(p.revenue || 0).toFixed(2),
+      Number(p.sharePct || 0).toFixed(2),
+      Number(p.cumulativePct || 0).toFixed(2),
+      p.bucket,
+    ]);
+  });
+
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet['!cols'] = [
+    { wch: 6 }, { wch: 32 }, { wch: 12 }, { wch: 14 },
+    { wch: 18 }, { wch: 22 }, { wch: 8 },
+  ];
+
+  // Class breakdown
+  const counts = abcAnalysis.reduce((acc, p) => { acc[p.bucket] = (acc[p.bucket] || 0) + 1; return acc; }, {});
+  const revenueByClass = abcAnalysis.reduce((acc, p) => { acc[p.bucket] = (acc[p.bucket] || 0) + Number(p.revenue || 0); return acc; }, {});
+  const breakdownRows = [
+    ['Class', 'Description', 'Items', 'Revenue', 'Share of Total Revenue (%)']
+  ];
+  const totalRevenue = abcAnalysis.reduce((sum, p) => sum + Number(p.revenue || 0), 0);
+  ['A', 'B', 'C'].forEach(b => {
+    const desc = b === 'A' ? 'Top ~80% revenue (high priority)'
+      : b === 'B' ? 'Next ~15% revenue (medium priority)'
+      : 'Bottom ~5% revenue (low priority)';
+    breakdownRows.push([
+      b,
+      desc,
+      counts[b] || 0,
+      (revenueByClass[b] || 0).toFixed(2),
+      totalRevenue > 0 ? (((revenueByClass[b] || 0) / totalRevenue) * 100).toFixed(2) : '0.00',
+    ]);
+  });
+  const breakdownSheet = XLSX.utils.aoa_to_sheet(breakdownRows);
+  breakdownSheet['!cols'] = [{ wch: 8 }, { wch: 38 }, { wch: 10 }, { wch: 16 }, { wch: 26 }];
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildMetadataSheet('ABC Analysis Report', period, [
+      ['Total Products', abcAnalysis.length],
+      ['Total Revenue', totalRevenue.toFixed(2)],
+    ]),
+    'Metadata'
+  );
+  XLSX.utils.book_append_sheet(workbook, breakdownSheet, 'Class Breakdown');
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Products');
+
+  const filename = buildFilename('abc_analysis', period);
+  XLSX.writeFile(workbook, filename);
+  return filename;
+};
+
 export default {
   exportToCSV,
   exportSalesToPDF,
@@ -1288,5 +1563,10 @@ export default {
   exportSalesToExcel,
   exportProductsToExcel,
   importProductsFromExcel,
-  downloadImportTemplate
+  downloadImportTemplate,
+  exportSalesSummaryToExcel,
+  exportTopProductsToExcel,
+  exportCategoryPerformanceToExcel,
+  exportDeadStockToExcel,
+  exportAbcAnalysisToExcel,
 };
