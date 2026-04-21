@@ -206,6 +206,47 @@ export const productService = {
     }
     return fetchJson(`${API_URL}/products/inventory-valuation`);
   },
+
+  getArchived: async () => {
+    const data = hasNativeBridge
+      ? await nativeCall('products', 'listArchived')
+      : await fetchJson(`${API_URL}/products/archived`);
+    return normalizeProductList(data);
+  },
+
+  restore: async (id) => {
+    const user = getCurrentUser();
+    const payload = {
+      userId: user?.id,
+      userName: user?.name,
+      userEmail: user?.email,
+    };
+    if (hasNativeBridge) {
+      return nativeCall('products', 'restore', { id, ...payload });
+    }
+    return fetchJson(`${API_URL}/products/${id}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  },
+
+  permanentDelete: async (id) => {
+    const user = getCurrentUser();
+    const payload = {
+      userId: user?.id,
+      userName: user?.name,
+      userEmail: user?.email,
+    };
+    if (hasNativeBridge) {
+      return nativeCall('products', 'permanentDelete', { id, ...payload });
+    }
+    return fetchJson(`${API_URL}/products/${id}/permanent`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  },
 };
 
 export const transactionService = {

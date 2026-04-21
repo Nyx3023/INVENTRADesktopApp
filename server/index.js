@@ -69,6 +69,8 @@ const ACTIVITY_ACTIONS = {
   CREATE_PRODUCT: 'CREATE_PRODUCT',
   UPDATE_PRODUCT: 'UPDATE_PRODUCT',
   DELETE_PRODUCT: 'DELETE_PRODUCT',
+  RESTORE_PRODUCT: 'RESTORE_PRODUCT',
+  PERMANENT_DELETE_PRODUCT: 'PERMANENT_DELETE_PRODUCT',
   STOCK_IN: 'STOCK_IN',
   STOCK_OUT: 'STOCK_OUT',
   STOCK_ADJUSTMENT: 'STOCK_ADJUSTMENT',
@@ -763,6 +765,22 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
+// Get archived (soft-deleted) products
+app.get('/api/products/archived', async (req, res) => {
+  try {
+    const [rows] = execute(
+      'SELECT id, name, description, category_name, price, cost, ' +
+      'quantity, barcode, image_url as imageUrl, status, deleted_at ' +
+      'FROM products WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC'
+    );
+    console.log('Archived products fetched:', rows.length);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error fetching archived products:', error);
+    res.status(500).json({ error: 'Failed to fetch archived products' });
+  }
+});
+
 // Get inventory valuation
 app.get('/api/products/inventory-valuation', async (req, res) => {
   try {
@@ -1142,6 +1160,160 @@ app.delete('/api/products/:id', async (req, res) => {
       error: 'Failed to delete product',
       details: error.message,
       code: error.code
+    });
+  }
+});
+
+// Restore an archived (soft-deleted) product
+app.post('/api/products/:id/restore', async (req, res) => {
+  const { id } = req.params;
+  console.log('Restoring product:', id);
+
+  try {
+    const [productRows] = execute(
+      'SELECT id, name, barcode, deleted_at FROM products WHERE id = ?',
+      [id]
+    );
+
+    if (productRows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    if (!productRows[0].deleted_at) {
+      return res.status(400).json({ error: 'Product is not archived' });
+    }
+
+    // If another active product has the same barcode, block the restore
+    if (productRows[0].barcode) {
+      const [barcodeConflict] = execute(
+        'SELECT id FROM products WHERE barcode = ? AND id != ? AND deleted_at IS NULL',
+        [productRows[0].barcode, id]
+      );
+      if (barcodeConflict.length > 0) {
+        return res.status(400).json({
+          error: 'Cannot restore: another active product already uses this barcode.',
+          code: 'BARCODE_CONFLICT'
+        });
+      }
+    }
+
+    const [result] = execute(
+      'UPDATE products SET deleted_at = NULL WHERE id = ?',
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    try {
+      await enqueueOutbox('product', id, 'restore', { id });
+    } catch (outboxError) {
+      console.warn('Failed to enqueue outbox for product restore:', outboxError);
+    }
+
+    try {
+      const user = getUserFromRequest(req);
+      logActivity({
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        action: ACTIVITY_ACTIONS.RESTORE_PRODUCT,
+        entityType: 'product',
+        entityId: id,
+        details: {
+          message: `Restored product: ${productRows[0].name}`,
+          productName: productRows[0].name,
+          productId: id
+        },
+        ipAddress: req.ip || req.connection?.remoteAddress || null
+      });
+    } catch (logError) {
+      console.warn('Failed to log activity for product restore:', logError);
+    }
+
+    res.json({
+      success: true,
+      message: 'Product restored successfully',
+      restoredId: id
+    });
+  } catch (error) {
+    console.error('Error restoring product:', error);
+    res.status(500).json({
+      error: 'Failed to restore product',
+      details: error.message,
+    });
+  }
+});
+
+// Permanently delete an archived product (hard delete)
+app.delete('/api/products/:id/permanent', async (req, res) => {
+  const { id } = req.params;
+  console.log('Permanently deleting product:', id);
+
+  try {
+    const [productRows] = execute(
+      'SELECT id, name, deleted_at FROM products WHERE id = ?',
+      [id]
+    );
+
+    if (productRows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    if (!productRows[0].deleted_at) {
+      return res.status(400).json({ error: 'Can only permanently delete archived products' });
+    }
+
+    const [result] = execute('DELETE FROM products WHERE id = ?', [id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    try {
+      await enqueueOutbox('product', id, 'delete', { id });
+    } catch (outboxError) {
+      console.warn('Failed to enqueue outbox for product permanent delete:', outboxError);
+    }
+
+    try {
+      const user = getUserFromRequest(req);
+      logActivity({
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        action: ACTIVITY_ACTIONS.PERMANENT_DELETE_PRODUCT,
+        entityType: 'product',
+        entityId: id,
+        details: {
+          message: `Permanently deleted product: ${productRows[0].name}`,
+          productName: productRows[0].name,
+          productId: id
+        },
+        ipAddress: req.ip || req.connection?.remoteAddress || null
+      });
+    } catch (logError) {
+      console.warn('Failed to log activity for product permanent delete:', logError);
+    }
+
+    res.json({
+      success: true,
+      message: 'Product permanently deleted',
+      deletedId: id
+    });
+  } catch (error) {
+    console.error('Error permanently deleting product:', error);
+    if (error.code === 'ER_ROW_IS_REFERENCED_2' || error.code === 'ER_ROW_IS_REFERENCED') {
+      return res.status(400).json({
+        error: 'Cannot permanently delete product as it is referenced in sales transactions or other records.',
+        code: 'PRODUCT_IN_USE'
+      });
+    }
+    res.status(500).json({
+      error: 'Failed to permanently delete product',
+      details: error.message,
+      code: error.code,
     });
   }
 });

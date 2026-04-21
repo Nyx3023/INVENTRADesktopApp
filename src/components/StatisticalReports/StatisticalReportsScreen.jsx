@@ -25,6 +25,8 @@ import {
   ArrowDownTrayIcon,
   ArchiveBoxXMarkIcon,
   Squares2X2Icon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import { toast } from 'react-hot-toast';
 import {
@@ -130,6 +132,11 @@ const StatisticalReportsScreen = () => {
   const [exportModalDeadStockDays, setExportModalDeadStockDays] = useState(60);
   const [isExporting, setIsExporting] = useState(false);
 
+  const DEAD_STOCK_PAGE_SIZE = 10;
+  const ABC_PAGE_SIZE = 10;
+  const [deadStockPage, setDeadStockPage] = useState(1);
+  const [abcPage, setAbcPage] = useState(1);
+
   const deadStockForModalExport = useMemo(
     () => computeDeadStock(transactions, allProducts, exportModalDeadStockDays),
     [transactions, allProducts, exportModalDeadStockDays]
@@ -144,6 +151,14 @@ const StatisticalReportsScreen = () => {
       setDeadStock(computeDeadStock(transactions, allProducts, deadStockDays));
     }
   }, [deadStockDays, allProducts, transactions]);
+
+  useEffect(() => {
+    setDeadStockPage(1);
+  }, [deadStock, deadStockDays]);
+
+  useEffect(() => {
+    setAbcPage(1);
+  }, [abcAnalysis, selectedPeriod]);
 
   const loadAnalyticsData = async () => {
     try {
@@ -721,6 +736,103 @@ const StatisticalReportsScreen = () => {
 
   const periodLabels = { weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly' };
 
+  const deadStockTotalPages = Math.max(1, Math.ceil(deadStock.length / DEAD_STOCK_PAGE_SIZE));
+  const deadStockCurrentPage = Math.min(deadStockPage, deadStockTotalPages);
+  const deadStockStart = (deadStockCurrentPage - 1) * DEAD_STOCK_PAGE_SIZE;
+  const deadStockEnd = deadStockStart + DEAD_STOCK_PAGE_SIZE;
+  const paginatedDeadStock = deadStock.slice(deadStockStart, deadStockEnd);
+
+  const abcTotalPages = Math.max(1, Math.ceil(abcAnalysis.length / ABC_PAGE_SIZE));
+  const abcCurrentPage = Math.min(abcPage, abcTotalPages);
+  const abcStart = (abcCurrentPage - 1) * ABC_PAGE_SIZE;
+  const abcEnd = abcStart + ABC_PAGE_SIZE;
+  const paginatedAbc = abcAnalysis.slice(abcStart, abcEnd);
+
+  const renderPagination = ({ currentPage, totalPages, onChange, totalItems, startIndex, endIndex, label }) => {
+    if (totalItems === 0) return null;
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+    if (endPage - startPage < maxVisiblePages - 1) {
+      startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+    const pageNumbers = [];
+    if (startPage > 1) {
+      pageNumbers.push(
+        <button
+          key={1}
+          onClick={() => onChange(1)}
+          className={`px-3 py-1.5 rounded-lg text-sm font-medium ${colors.text.secondary} hover:${colors.bg.secondary}`}
+        >
+          1
+        </button>
+      );
+      if (startPage > 2) {
+        pageNumbers.push(<span key="sp-start" className={`px-2 ${colors.text.tertiary}`}>...</span>);
+      }
+    }
+    for (let i = startPage; i <= endPage; i++) {
+      pageNumbers.push(
+        <button
+          key={i}
+          onClick={() => onChange(i)}
+          className={`px-3 py-1.5 rounded-lg text-sm font-medium ${currentPage === i
+            ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow'
+            : `${colors.text.secondary} hover:${colors.bg.secondary}`
+            }`}
+        >
+          {i}
+        </button>
+      );
+    }
+    if (endPage < totalPages) {
+      if (endPage < totalPages - 1) {
+        pageNumbers.push(<span key="sp-end" className={`px-2 ${colors.text.tertiary}`}>...</span>);
+      }
+      pageNumbers.push(
+        <button
+          key={totalPages}
+          onClick={() => onChange(totalPages)}
+          className={`px-3 py-1.5 rounded-lg text-sm font-medium ${colors.text.secondary} hover:${colors.bg.secondary}`}
+        >
+          {totalPages}
+        </button>
+      );
+    }
+    return (
+      <div className={`mt-3 flex flex-wrap items-center justify-between gap-2 pt-3 border-t ${colors.border.primary}`}>
+        <div className={`text-xs ${colors.text.tertiary}`}>
+          Showing {startIndex + 1}-{Math.min(endIndex, totalItems)} of {totalItems} {label}
+        </div>
+        {totalPages > 1 && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => onChange(currentPage - 1)}
+              disabled={currentPage === 1}
+              className={`p-1.5 rounded-lg ${currentPage === 1
+                ? `${colors.text.tertiary} cursor-not-allowed opacity-50`
+                : `${colors.text.secondary} hover:${colors.bg.secondary}`
+                }`}
+            >
+              <ChevronLeftIcon className="h-4 w-4" />
+            </button>
+            {pageNumbers}
+            <button
+              onClick={() => onChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              className={`p-1.5 rounded-lg ${currentPage === totalPages
+                ? `${colors.text.tertiary} cursor-not-allowed opacity-50`
+                : `${colors.text.secondary} hover:${colors.bg.secondary}`
+                }`}
+            >
+              <ChevronRightIcon className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const exportTypeOptions = [
     {
       id: 'sales_summary',
@@ -1066,7 +1178,7 @@ const StatisticalReportsScreen = () => {
                   </td>
                 </tr>
               )}
-              {deadStock.slice(0, 25).map((p) => (
+              {paginatedDeadStock.map((p) => (
                 <tr key={p.id}>
                   <td className={`px-4 py-2 text-sm font-medium ${colors.text.primary}`}>{p.name}</td>
                   <td className={`px-4 py-2 text-sm ${colors.text.secondary}`}>{p.category_name || '—'}</td>
@@ -1083,11 +1195,15 @@ const StatisticalReportsScreen = () => {
               ))}
             </tbody>
           </table>
-          {deadStock.length > 25 && (
-            <p className={`text-xs ${colors.text.tertiary} mt-2`}>
-              Showing 25 of {deadStock.length} items — export to Excel to see the full list.
-            </p>
-          )}
+          {renderPagination({
+            currentPage: deadStockCurrentPage,
+            totalPages: deadStockTotalPages,
+            onChange: (page) => setDeadStockPage(Math.max(1, Math.min(page, deadStockTotalPages))),
+            totalItems: deadStock.length,
+            startIndex: deadStockStart,
+            endIndex: deadStockEnd,
+            label: 'items',
+          })}
         </div>
       </div>
 
@@ -1154,7 +1270,7 @@ const StatisticalReportsScreen = () => {
                   </td>
                 </tr>
               )}
-              {abcAnalysis.slice(0, 25).map((p) => {
+              {paginatedAbc.map((p) => {
                 const tone = p.bucket === 'A'
                   ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
                   : p.bucket === 'B'
@@ -1176,11 +1292,15 @@ const StatisticalReportsScreen = () => {
               })}
             </tbody>
           </table>
-          {abcAnalysis.length > 25 && (
-            <p className={`text-xs ${colors.text.tertiary} mt-2`}>
-              Showing 25 of {abcAnalysis.length} products — export to Excel to see the full list.
-            </p>
-          )}
+          {renderPagination({
+            currentPage: abcCurrentPage,
+            totalPages: abcTotalPages,
+            onChange: (page) => setAbcPage(Math.max(1, Math.min(page, abcTotalPages))),
+            totalItems: abcAnalysis.length,
+            startIndex: abcStart,
+            endIndex: abcEnd,
+            label: 'products',
+          })}
         </div>
       </div>
     </div>
