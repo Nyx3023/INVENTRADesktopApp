@@ -1013,7 +1013,7 @@ const StatisticalReportsScreen = () => {
         <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center justify-between">
             <div>
-              <h3 className={`${colors.text.secondary} text-sm`}>Daily Sales</h3>
+              <h3 className={`${colors.text.secondary} text-sm`}>{selectedPeriod === 'yearly' ? 'Avg. Daily Sales' : 'Daily Sales'}</h3>
               <p className={`text-2xl font-bold ${colors.text.primary}`}>{formatCurrency(salesData.daily || 0)}</p>
             </div>
             <div className="p-3 bg-blue-100 dark:bg-blue-900/20 rounded-full">
@@ -1031,7 +1031,7 @@ const StatisticalReportsScreen = () => {
         <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center justify-between">
             <div>
-              <h3 className={`${colors.text.secondary} text-sm`}>Weekly Sales</h3>
+              <h3 className={`${colors.text.secondary} text-sm`}>{selectedPeriod === 'yearly' ? 'Avg. Weekly Sales' : 'Weekly Sales'}</h3>
               <p className={`text-2xl font-bold ${colors.text.primary}`}>{formatCurrency(salesData.weekly || 0)}</p>
             </div>
             <div className="p-3 bg-green-100 dark:bg-green-900/20 rounded-full">
@@ -1050,7 +1050,7 @@ const StatisticalReportsScreen = () => {
           <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center justify-between">
             <div>
-              <h3 className={`${colors.text.secondary} text-sm`}>Monthly Sales</h3>
+              <h3 className={`${colors.text.secondary} text-sm`}>{selectedPeriod === 'yearly' ? 'Avg. Monthly Sales' : 'Monthly Sales'}</h3>
               <p className={`text-2xl font-bold ${colors.text.primary}`}>{formatCurrency(salesData.monthly || 0)}</p>
             </div>
             <div className="p-3 bg-purple-100 dark:bg-purple-900/20 rounded-full">

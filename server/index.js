@@ -3531,20 +3531,41 @@ app.get('/api/statistical-reports/summary', async (req, res) => {
       yearlyPreviousEnd = `${selectedYear}-01-01 00:00:00`;
     }
 
-    const [salesRows] = execute(
-      `SELECT
-        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', 'start of day') THEN total ELSE 0 END), 0) AS daily,
-        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS weekly,
-        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS monthly,
-        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-90 days') THEN total ELSE 0 END), 0) AS quarterly,
-        ${period === 'yearly'
-          ? `COALESCE(SUM(CASE WHEN timestamp >= ? AND timestamp < ? THEN total ELSE 0 END), 0)`
-          : `COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-365 days') THEN total ELSE 0 END), 0)`
-        } AS yearly
-      FROM transactions
-      WHERE archived_at IS NULL`,
-      period === 'yearly' ? [yearlyRangeStart, yearlyRangeEnd] : []
-    );
+    let salesDataResult = { daily: 0, weekly: 0, monthly: 0, quarterly: 0, yearly: 0 };
+    if (period === 'yearly') {
+      const [salesRows] = execute(
+        `SELECT COALESCE(SUM(CASE WHEN timestamp >= ? AND timestamp < ? THEN total ELSE 0 END), 0) AS yearly
+         FROM transactions
+         WHERE archived_at IS NULL`,
+        [yearlyRangeStart, yearlyRangeEnd]
+      );
+      const yearlyTotal = Number(salesRows?.[0]?.yearly || 0);
+      salesDataResult = {
+        yearly: yearlyTotal,
+        quarterly: yearlyTotal / 4,
+        monthly: yearlyTotal / 12,
+        weekly: yearlyTotal / 52,
+        daily: yearlyTotal / 365,
+      };
+    } else {
+      const [salesRows] = execute(
+        `SELECT
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', 'start of day') THEN total ELSE 0 END), 0) AS daily,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS weekly,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS monthly,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-90 days') THEN total ELSE 0 END), 0) AS quarterly,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-365 days') THEN total ELSE 0 END), 0) AS yearly
+        FROM transactions
+        WHERE archived_at IS NULL`
+      );
+      salesDataResult = {
+        daily: Number(salesRows?.[0]?.daily || 0),
+        weekly: Number(salesRows?.[0]?.weekly || 0),
+        monthly: Number(salesRows?.[0]?.monthly || 0),
+        quarterly: Number(salesRows?.[0]?.quarterly || 0),
+        yearly: Number(salesRows?.[0]?.yearly || 0),
+      };
+    }
 
     const rangeStart = period === 'yearly' ? yearlyRangeStart : null;
     const rangeEnd = period === 'yearly' ? yearlyRangeEnd : null;
@@ -3821,13 +3842,7 @@ app.get('/api/statistical-reports/summary', async (req, res) => {
     const cost = Number(revenueSource.cost || 0);
 
     res.json({
-      salesData: {
-        daily: Number(salesRows?.[0]?.daily || 0),
-        weekly: Number(salesRows?.[0]?.weekly || 0),
-        monthly: Number(salesRows?.[0]?.monthly || 0),
-        quarterly: Number(salesRows?.[0]?.quarterly || 0),
-        yearly: Number(salesRows?.[0]?.yearly || 0),
-      },
+      salesData: salesDataResult,
       revenueData: {
         revenue,
         cost,
