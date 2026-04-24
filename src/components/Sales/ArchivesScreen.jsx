@@ -20,6 +20,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { toast } from 'react-hot-toast';
 import { formatCurrency, formatDate, parseLocalTimestamp } from '../../utils/formatters';
 import ReceiptModal from './ReceiptModal';
+import LazyPageLoader from '../common/LazyPageLoader';
 
 const ArchivesScreen = () => {
   const { user } = useAuth();
@@ -39,6 +40,7 @@ const ArchivesScreen = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [transactionToProcess, setTransactionToProcess] = useState(null);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(true);
+  const [archivedTransactionsTotal, setArchivedTransactionsTotal] = useState(0);
 
   // Products state
   const [archivedProducts, setArchivedProducts] = useState([]);
@@ -48,7 +50,6 @@ const ArchivesScreen = () => {
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
 
   useEffect(() => {
-    loadArchivedTransactions();
     loadArchivedProducts();
   }, []);
 
@@ -57,11 +58,24 @@ const ArchivesScreen = () => {
     setCurrentPage(1);
   }, [activeTab, searchTerm]);
 
+  useEffect(() => {
+    if (activeTab === 'transactions') {
+      loadArchivedTransactions();
+    }
+  }, [activeTab, currentPage, searchTerm]);
+
   const loadArchivedTransactions = async () => {
     try {
       setIsLoadingTransactions(true);
-      const data = await transactionService.getArchived();
-      setArchivedTransactions(data || []);
+      const response = await transactionService.getArchived({
+        paginated: 1,
+        page: currentPage,
+        limit: itemsPerPage,
+        search: searchTerm || undefined,
+        includeItems: 1,
+      });
+      setArchivedTransactions(response?.items || []);
+      setArchivedTransactionsTotal(response?.total || 0);
     } catch (error) {
       console.error('Error loading archived transactions:', error);
       toast.error('Failed to load archived transactions');
@@ -84,15 +98,6 @@ const ArchivesScreen = () => {
   };
 
   // ---- Transactions ----
-  const filteredTransactions = useMemo(() => {
-    if (!searchTerm) return archivedTransactions;
-    const term = searchTerm.toLowerCase();
-    return archivedTransactions.filter(t =>
-      t.id.toLowerCase().includes(term) ||
-      t.items?.some(item => item.name?.toLowerCase().includes(term))
-    );
-  }, [archivedTransactions, searchTerm]);
-
   const viewReceipt = (transaction) => {
     setSelectedTransaction(transaction);
     setShowReceiptModal(true);
@@ -107,7 +112,7 @@ const ArchivesScreen = () => {
     if (!transactionToProcess) return;
     try {
       await transactionService.restore(transactionToProcess.id, user.role);
-      setArchivedTransactions(prev => prev.filter(t => t.id !== transactionToProcess.id));
+      loadArchivedTransactions();
       toast.success('Transaction restored successfully');
       setShowRestoreModal(false);
       setTransactionToProcess(null);
@@ -126,7 +131,7 @@ const ArchivesScreen = () => {
     if (!transactionToProcess) return;
     try {
       await transactionService.permanentDelete(transactionToProcess.id, user.role);
-      setArchivedTransactions(prev => prev.filter(t => t.id !== transactionToProcess.id));
+      loadArchivedTransactions();
       toast.success('Transaction permanently deleted');
       setShowDeleteModal(false);
       setTransactionToProcess(null);
@@ -195,12 +200,14 @@ const ArchivesScreen = () => {
   };
 
   // ---- Pagination ----
-  const currentList = activeTab === 'transactions' ? filteredTransactions : filteredProducts;
+  const currentList = activeTab === 'transactions'
+    ? Array.from({ length: archivedTransactionsTotal })
+    : filteredProducts;
   const totalPages = Math.max(1, Math.ceil(currentList.length / itemsPerPage));
   const safePage = Math.min(currentPage, totalPages);
   const startIndex = (safePage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const paginatedTransactions = filteredTransactions.slice(startIndex, endIndex);
+  const paginatedTransactions = archivedTransactions;
   const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
 
   const goToPage = (page) => {
@@ -234,7 +241,7 @@ const ArchivesScreen = () => {
         </div>
         <div className={`text-sm ${colors.text.secondary}`}>
           {activeTab === 'transactions'
-            ? `Total: ${filteredTransactions.length}`
+            ? `Total: ${archivedTransactionsTotal}`
             : `Total: ${filteredProducts.length}`}
         </div>
       </div>
@@ -254,7 +261,7 @@ const ArchivesScreen = () => {
           <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full ${
             activeTab === 'transactions' ? 'bg-white/20' : colors.bg.secondary
           }`}>
-            {archivedTransactions.length}
+            {archivedTransactionsTotal}
           </span>
         </button>
         <button
@@ -378,13 +385,13 @@ const ArchivesScreen = () => {
 
       {/* Loading state for current tab */}
       {isLoading ? (
-        <div className={`${colors.card.primary} p-12 rounded-lg shadow border ${colors.border.primary} flex items-center justify-center`}>
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-            <p className={`${colors.text.secondary}`}>
-              Loading archived {activeTab === 'transactions' ? 'transactions' : 'products'}...
-            </p>
-          </div>
+        <div className={`${colors.card.primary} p-4 rounded-lg shadow border ${colors.border.primary}`}>
+          <LazyPageLoader
+            title={`Loading archived ${activeTab === 'transactions' ? 'transactions' : 'products'}`}
+            subtitle="Fetching archive records..."
+            rows={4}
+            centered={false}
+          />
         </div>
       ) : (
         <>
@@ -419,7 +426,7 @@ const ArchivesScreen = () => {
                     </tr>
                   </thead>
                   <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
-                    {filteredTransactions.length === 0 ? (
+                    {archivedTransactionsTotal === 0 ? (
                       <tr>
                         <td colSpan="7" className={`px-6 py-8 text-center ${colors.text.secondary}`}>
                           No archived transactions found

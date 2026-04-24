@@ -18,23 +18,26 @@ import {
 import { transactionService } from '../../services/api';
 import { useAuth, usePermissions } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { useSettings } from '../../context/SettingsContext';
 import { toast } from 'react-hot-toast';
-import { formatCurrency, formatDate, parseLocalTimestamp } from '../../utils/formatters';
+import { formatCurrency, formatDate } from '../../utils/formatters';
 import ReceiptModal from './ReceiptModal';
 import DeleteConfirmationModal from './DeleteConfirmationModal';
 import ExportSettingsModal from './ExportSettingsModal';
 import { printerService } from '../../utils/printerService';
 import { exportSalesToExcel } from '../../utils/exportUtils';
 import AdminOverrideModal from '../common/AdminOverrideModal';
+import LazyPageLoader from '../common/LazyPageLoader';
+
+const TRANSACTION_EXPORT_LIMIT = 500;
 
 const SalesScreen = () => {
   const { user } = useAuth();
   const { hasPermission } = usePermissions();
   const { colors } = useTheme();
-  const { settings } = useSettings();
   const [transactions, setTransactions] = useState([]);
-  const [filteredTransactions, setFilteredTransactions] = useState([]);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const [cashierOptions, setCashierOptions] = useState([]);
+  const [paymentMethodOptions, setPaymentMethodOptions] = useState([]);
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -49,12 +52,13 @@ const SalesScreen = () => {
     startDate: '',
     endDate: ''
   });
+  const [datePreset, setDatePreset] = useState('all');
   const [cashierFilter, setCashierFilter] = useState('');
   const [paymentMethodFilter, setPaymentMethodFilter] = useState('');
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [itemsPerPage, setItemsPerPage] = useState(10);
 
   const [summary, setSummary] = useState({
     totalSales: 0,
@@ -64,21 +68,113 @@ const SalesScreen = () => {
   });
 
   useEffect(() => {
-    loadTransactions();
+    loadSummary();
   }, []);
 
   useEffect(() => {
-    applyFilters();
-    setCurrentPage(1); // Reset to first page when filters change
-  }, [transactions, searchTerm, dateFilter, cashierFilter, paymentMethodFilter]);
+    loadTransactions();
+  }, [currentPage, itemsPerPage, searchTerm, dateFilter.startDate, dateFilter.endDate, cashierFilter, paymentMethodFilter]);
+
+  const toISODateString = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const presetToRange = (presetId) => {
+    const today = new Date();
+    const end = toISODateString(today);
+
+    switch (presetId) {
+      case 'today':
+        return { startDate: end, endDate: end };
+      case '7d': {
+        const start = new Date();
+        start.setDate(today.getDate() - 6);
+        return { startDate: toISODateString(start), endDate: end };
+      }
+      case '30d': {
+        const start = new Date();
+        start.setDate(today.getDate() - 29);
+        return { startDate: toISODateString(start), endDate: end };
+      }
+      case '90d': {
+        const start = new Date();
+        start.setDate(today.getDate() - 89);
+        return { startDate: toISODateString(start), endDate: end };
+      }
+      case 'ytd': {
+        const start = new Date(today.getFullYear(), 0, 1);
+        return { startDate: toISODateString(start), endDate: end };
+      }
+      case '1y': {
+        const start = new Date();
+        start.setFullYear(today.getFullYear() - 1);
+        start.setDate(start.getDate() + 1);
+        return { startDate: toISODateString(start), endDate: end };
+      }
+      case 'all':
+      default:
+        return { startDate: '', endDate: '' };
+    }
+  };
+
+  const applyDatePreset = (presetId) => {
+    setDatePreset(presetId);
+    setCurrentPage(1);
+    if (presetId === 'custom') {
+      return;
+    }
+    const range = presetToRange(presetId);
+    setDateFilter(range);
+  };
+
+  const datePresetOptions = [
+    { id: 'today', label: 'Today' },
+    { id: '7d', label: '7 days' },
+    { id: '30d', label: '30 days' },
+    { id: '90d', label: '90 days' },
+    { id: 'ytd', label: 'Year to date' },
+    { id: '1y', label: 'Last 12 months' },
+    { id: 'all', label: 'All time' },
+    { id: 'custom', label: 'Custom' },
+  ];
+
+  const buildQueryParams = (page = currentPage, limit = itemsPerPage) => ({
+    page,
+    limit,
+    paginated: 1,
+    includeItems: 1,
+    search: searchTerm || undefined,
+    startDate: dateFilter.startDate || undefined,
+    endDate: dateFilter.endDate || undefined,
+    cashier: cashierFilter || undefined,
+    paymentMethod: paymentMethodFilter || undefined,
+  });
+
+  const loadSummary = async () => {
+    try {
+      const summaryData = await transactionService.getSummary();
+      setSummary({
+        totalSales: summaryData.totalSales || 0,
+        totalTransactions: summaryData.totalTransactions || 0,
+        averageTransaction: summaryData.averageTransaction || 0,
+        todaySales: summaryData.todaySales || 0,
+      });
+      setCashierOptions(summaryData.cashiers || []);
+      setPaymentMethodOptions(summaryData.paymentMethods || []);
+    } catch (error) {
+      console.error('Error loading transaction summary:', error);
+    }
+  };
 
   const loadTransactions = async () => {
     try {
       setIsLoading(true);
-      const data = await transactionService.getAll();
-      console.log('Loaded transactions:', data);
-      setTransactions(data || []);
-      calculateSummary(data || []);
+      const response = await transactionService.getPage(buildQueryParams());
+      setTransactions(response?.items || []);
+      setTotalRecords(response?.total || 0);
     } catch (error) {
       console.error('Error loading transactions:', error);
     } finally {
@@ -86,125 +182,24 @@ const SalesScreen = () => {
     }
   };
 
-  const calculateSummary = (transactionList) => {
-    const totalSales = transactionList.reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
-    const totalTransactions = transactionList.length;
-    const averageTransaction = totalTransactions > 0 ? totalSales / totalTransactions : 0;
+  const fetchTransactionsForExport = async (initialParams) => {
+    let page = Number(initialParams.page || 1);
+    const limit = Number(initialParams.limit || TRANSACTION_EXPORT_LIMIT);
+    const rows = [];
 
-    // Get today's date in local timezone
-    const today = new Date();
-    const todayDateString = today.getFullYear() + '-' +
-      String(today.getMonth() + 1).padStart(2, '0') + '-' +
-      String(today.getDate()).padStart(2, '0');
-
-    const todaySales = transactionList
-      .filter(t => {
-        const transactionDate = parseLocalTimestamp(t.timestamp);
-        const transactionDateString = transactionDate.getFullYear() + '-' +
-          String(transactionDate.getMonth() + 1).padStart(2, '0') + '-' +
-          String(transactionDate.getDate()).padStart(2, '0');
-        return transactionDateString === todayDateString;
-      })
-      .reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
-
-    console.log('Today sales calculation:', {
-      todayDateString,
-      totalTransactions: transactionList.length,
-      todaysTransactions: transactionList.filter(t => {
-        const transactionDate = parseLocalTimestamp(t.timestamp);
-        const transactionDateString = transactionDate.getFullYear() + '-' +
-          String(transactionDate.getMonth() + 1).padStart(2, '0') + '-' +
-          String(transactionDate.getDate()).padStart(2, '0');
-        return transactionDateString === todayDateString;
-      }).length,
-      todaySales
-    });
-
-    setSummary({
-      totalSales,
-      totalTransactions,
-      averageTransaction,
-      todaySales
-    });
-  };
-
-  const applyFilters = () => {
-    let filtered = [...transactions];
-
-    // Search filter
-    if (searchTerm) {
-      filtered = filtered.filter(transaction =>
-        transaction.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        transaction.items?.some(item =>
-          item.name.toLowerCase().includes(searchTerm.toLowerCase())
-        )
-      );
-    }
-
-    // Date filter
-    if (dateFilter.startDate || dateFilter.endDate) {
-      filtered = filtered.filter(transaction => {
-        const transactionDate = new Date(transaction.timestamp);
-
-        if (dateFilter.startDate) {
-          const startDate = new Date(dateFilter.startDate);
-          startDate.setHours(0, 0, 0, 0);
-          if (transactionDate < startDate) return false;
-        }
-
-        if (dateFilter.endDate) {
-          const endDate = new Date(dateFilter.endDate);
-          endDate.setHours(23, 59, 59, 999);
-          if (transactionDate > endDate) return false;
-        }
-
-        return true;
+    while (true) {
+      const response = await transactionService.getPage({
+        ...initialParams,
+        page,
+        limit,
+        paginated: 1,
       });
+      rows.push(...(response?.items || []));
+      if (!response?.hasNextPage) break;
+      page += 1;
     }
 
-    // Cashier filter
-    if (cashierFilter) {
-      filtered = filtered.filter(transaction => {
-        const cashierName = transaction.user_name || transaction.userName || 'System';
-        return cashierName.toLowerCase() === cashierFilter.toLowerCase();
-      });
-    }
-
-    // Payment method filter
-    if (paymentMethodFilter) {
-      filtered = filtered.filter(transaction => {
-        const paymentMethod = (transaction.payment_method || transaction.paymentMethod || 'cash').toLowerCase();
-        return paymentMethod === paymentMethodFilter.toLowerCase();
-      });
-    }
-
-    setFilteredTransactions(filtered);
-    // Don't recalculate summary when filtering - it should always show totals from all transactions
-    // calculateSummary(filtered);
-  };
-
-  // Get unique cashiers from transactions
-  const getUniqueCashiers = () => {
-    const cashiers = new Set();
-    transactions.forEach(transaction => {
-      const cashierName = transaction.user_name || transaction.userName || 'System';
-      if (cashierName) {
-        cashiers.add(cashierName);
-      }
-    });
-    return Array.from(cashiers).sort();
-  };
-
-  // Get unique payment methods from transactions
-  const getUniquePaymentMethods = () => {
-    const methods = new Set();
-    transactions.forEach(transaction => {
-      const method = transaction.payment_method || transaction.paymentMethod || 'cash';
-      if (method) {
-        methods.add(method.toLowerCase());
-      }
-    });
-    return Array.from(methods).sort();
+    return rows;
   };
 
   const viewReceipt = (transaction) => {
@@ -264,12 +259,7 @@ const SalesScreen = () => {
     try {
       const roleToUse = isAdminOverride ? 'admin' : user.role;
       await transactionService.delete(transactionToDelete.id, roleToUse);
-
-      // Update the transactions list
-      const updatedTransactions = transactions.filter(t => t.id !== transactionToDelete.id);
-      setTransactions(updatedTransactions);
-
-
+      await Promise.all([loadTransactions(), loadSummary()]);
       toast.success('Transaction archived successfully. It will be permanently deleted after 60 days.');
       setShowDeleteModal(false);
       setTransactionToDelete(null);
@@ -295,7 +285,10 @@ const SalesScreen = () => {
 
   const handleExport = async (exportSettings) => {
     try {
-      const dataToExport = exportSettings.dataSource === 'all' ? transactions : filteredTransactions;
+      const exportParams = exportSettings.dataSource === 'all'
+        ? { page: 1, limit: TRANSACTION_EXPORT_LIMIT, paginated: 1, includeItems: 1 }
+        : buildQueryParams(1, TRANSACTION_EXPORT_LIMIT);
+      const dataToExport = await fetchTransactionsForExport(exportParams);
       const filename = exportSalesToExcel(dataToExport, exportSettings);
       toast.success(`Sales data exported successfully: ${filename}`);
     } catch (error) {
@@ -306,10 +299,10 @@ const SalesScreen = () => {
 
 
   // Pagination calculations
-  const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage);
+  const totalPages = Math.max(1, Math.ceil(totalRecords / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const paginatedTransactions = filteredTransactions.slice(startIndex, endIndex);
+  const paginatedTransactions = transactions;
 
   const goToPage = (page) => {
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
@@ -318,12 +311,12 @@ const SalesScreen = () => {
 
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className={`${colors.text.secondary}`}>Loading sales data...</p>
-        </div>
-      </div>
+      <LazyPageLoader
+        title="Loading sales data"
+        subtitle="Fetching transactions, cashiers and totals..."
+        rows={5}
+        centered
+      />
     );
   }
 
@@ -333,8 +326,24 @@ const SalesScreen = () => {
       <div className="flex justify-between items-center">
         <h1 className={`text-2xl font-bold ${colors.text.primary}`}>Sales Management</h1>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className={`text-sm ${colors.text.secondary}`}>Rows:</label>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setCurrentPage(1);
+                setItemsPerPage(Number(e.target.value));
+              }}
+              className={`border rounded-lg px-2 py-1.5 text-sm ${colors.input.primary}`}
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
           <span className={`text-sm ${colors.text.secondary}`}>
-            {filteredTransactions.length} records
+            {totalRecords} records
           </span>
           <button
             onClick={() => setShowExportModal(true)}
@@ -400,7 +409,10 @@ const SalesScreen = () => {
               placeholder="Search by transaction ID or product..."
               className={`w-full pl-10 pr-4 py-2.5 border rounded-lg ${colors.input.primary} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                setCurrentPage(1);
+                setSearchTerm(e.target.value);
+              }}
             />
           </div>
 
@@ -410,14 +422,15 @@ const SalesScreen = () => {
             className={`flex items-center gap-2 px-4 py-2.5 border rounded-lg ${colors.border.primary} ${colors.bg.secondary} ${colors.text.primary} hover:${colors.bg.tertiary} transition-colors relative`}
           >
             <FunnelIcon className="h-5 w-5" />
-            <span className="hidden sm:inline">Filters</span>
-            {(dateFilter.startDate || dateFilter.endDate || cashierFilter || paymentMethodFilter) && (
+            <span className="hidden sm:inline">More filters</span>
+            {(cashierFilter || paymentMethodFilter) && (
               <span className="absolute -top-1 -right-1 h-4 w-4 bg-blue-600 rounded-full flex items-center justify-center">
                 <span className="text-xs text-white font-bold">!</span>
               </span>
             )}
           </button>
         </div>
+
       </div>
 
       {/* Filters Modal */}
@@ -443,35 +456,65 @@ const SalesScreen = () => {
 
             {/* Modal Body */}
             <div className="p-6 space-y-6">
+              <div>
+                <label className={`block text-sm font-medium ${colors.text.secondary} mb-2`}>
+                  <CalendarIcon className="h-4 w-4 inline mr-1" />
+                  Date Range
+                </label>
+                <select
+                  className={`w-full border rounded-lg px-3 py-2.5 ${colors.input.primary} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
+                  value={datePreset}
+                  onChange={(e) => applyDatePreset(e.target.value)}
+                >
+                  {datePresetOptions.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {/* Filter Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Date Range - Start */}
-                <div>
-                  <label className={`block text-sm font-medium ${colors.text.secondary} mb-2`}>
-                    <CalendarIcon className="h-4 w-4 inline mr-1" />
-                    Start Date
-                  </label>
-                  <input
-                    type="date"
-                    className={`w-full border rounded-lg px-3 py-2.5 ${colors.input.primary} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
-                    value={dateFilter.startDate}
-                    onChange={(e) => setDateFilter(prev => ({ ...prev, startDate: e.target.value }))}
-                  />
-                </div>
+                {datePreset === 'custom' && (
+                  <>
+                    {/* Date Range - Start */}
+                    <div>
+                      <label className={`block text-sm font-medium ${colors.text.secondary} mb-2`}>
+                        <CalendarIcon className="h-4 w-4 inline mr-1" />
+                        Start Date
+                      </label>
+                      <input
+                        type="date"
+                        className={`w-full border rounded-lg px-3 py-2.5 ${colors.input.primary} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
+                        value={dateFilter.startDate}
+                        onChange={(e) => {
+                          setCurrentPage(1);
+                          setDatePreset('custom');
+                          setDateFilter(prev => ({ ...prev, startDate: e.target.value }));
+                        }}
+                      />
+                    </div>
 
-                {/* Date Range - End */}
-                <div>
-                  <label className={`block text-sm font-medium ${colors.text.secondary} mb-2`}>
-                    <CalendarIcon className="h-4 w-4 inline mr-1" />
-                    End Date
-                  </label>
-                  <input
-                    type="date"
-                    className={`w-full border rounded-lg px-3 py-2.5 ${colors.input.primary} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
-                    value={dateFilter.endDate}
-                    onChange={(e) => setDateFilter(prev => ({ ...prev, endDate: e.target.value }))}
-                  />
-                </div>
+                    {/* Date Range - End */}
+                    <div>
+                      <label className={`block text-sm font-medium ${colors.text.secondary} mb-2`}>
+                        <CalendarIcon className="h-4 w-4 inline mr-1" />
+                        End Date
+                      </label>
+                      <input
+                        type="date"
+                        className={`w-full border rounded-lg px-3 py-2.5 ${colors.input.primary} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
+                        value={dateFilter.endDate}
+                        onChange={(e) => {
+                          setCurrentPage(1);
+                          setDatePreset('custom');
+                          setDateFilter(prev => ({ ...prev, endDate: e.target.value }));
+                        }}
+                      />
+                    </div>
+                  </>
+                )}
 
                 {/* Cashier Filter */}
                 <div>
@@ -482,10 +525,13 @@ const SalesScreen = () => {
                   <select
                     className={`w-full border rounded-lg px-3 py-2.5 ${colors.input.primary} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
                     value={cashierFilter}
-                    onChange={(e) => setCashierFilter(e.target.value)}
+                    onChange={(e) => {
+                      setCurrentPage(1);
+                      setCashierFilter(e.target.value);
+                    }}
                   >
                     <option value="">All Cashiers</option>
-                    {getUniqueCashiers().map(cashier => (
+                    {cashierOptions.map(cashier => (
                       <option key={cashier} value={cashier}>{cashier}</option>
                     ))}
                   </select>
@@ -500,10 +546,13 @@ const SalesScreen = () => {
                   <select
                     className={`w-full border rounded-lg px-3 py-2.5 ${colors.input.primary} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
                     value={paymentMethodFilter}
-                    onChange={(e) => setPaymentMethodFilter(e.target.value)}
+                    onChange={(e) => {
+                      setCurrentPage(1);
+                      setPaymentMethodFilter(e.target.value);
+                    }}
                   >
                     <option value="">All Payment Methods</option>
-                    {getUniquePaymentMethods().map(method => (
+                    {paymentMethodOptions.map(method => (
                       <option key={method} value={method}>
                         {method.charAt(0).toUpperCase() + method.slice(1)}
                       </option>
@@ -517,8 +566,10 @@ const SalesScreen = () => {
             <div className={`flex justify-between items-center p-6 border-t ${colors.border.primary}`}>
               <button
                 onClick={() => {
+                  setCurrentPage(1);
                   setSearchTerm('');
                   setDateFilter({ startDate: '', endDate: '' });
+                  setDatePreset('all');
                   setCashierFilter('');
                   setPaymentMethodFilter('');
                 }}
@@ -568,7 +619,7 @@ const SalesScreen = () => {
               </tr>
             </thead>
             <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
-              {filteredTransactions.length === 0 ? (
+              {paginatedTransactions.length === 0 ? (
                 <tr>
                   <td colSpan="7" className={`px-6 py-8 text-center ${colors.text.secondary}`}>
                     No transactions found
@@ -656,7 +707,9 @@ const SalesScreen = () => {
         <div className={`${colors.card.primary} p-4 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center justify-between">
             <div className={`text-sm ${colors.text.secondary}`}>
-              Showing {startIndex + 1} to {Math.min(endIndex, filteredTransactions.length)} of {filteredTransactions.length} transactions
+              {totalRecords === 0
+                ? 'Showing 0 of 0 transactions'
+                : `Showing ${startIndex + 1} to ${Math.min(endIndex, totalRecords)} of ${totalRecords} transactions`}
             </div>
 
             <div className="flex items-center space-x-2">
@@ -755,8 +808,8 @@ const SalesScreen = () => {
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
         onExport={handleExport}
-        totalRecords={transactions.length}
-        filteredRecords={filteredTransactions.length}
+        totalRecords={summary.totalTransactions}
+        filteredRecords={totalRecords}
       />
 
       {/* Receipt Modal */}

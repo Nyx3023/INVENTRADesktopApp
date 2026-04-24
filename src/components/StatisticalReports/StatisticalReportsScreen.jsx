@@ -12,9 +12,10 @@ import {
   ArcElement,
 } from 'chart.js';
 import { Line, Bar, Pie, Doughnut } from 'react-chartjs-2';
-import { transactionService, productService } from '../../services/api';
+import { analyticsService, transactionService, productService } from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { formatCurrency } from '../../utils/formatters';
+import LazyPageLoader from '../common/LazyPageLoader';
 import {
   CalendarIcon,
   ArrowTrendingUpIcon,
@@ -92,6 +93,9 @@ const computeDeadStock = (transactions, products, daysThreshold) => {
 const StatisticalReportsScreen = () => {
   const { colors } = useTheme();
   const [selectedPeriod, setSelectedPeriod] = useState('monthly');
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [availableYears, setAvailableYears] = useState([]);
+  const [comparisonYear, setComparisonYear] = useState(null);
   const [salesData, setSalesData] = useState({
     daily: 0,
     weekly: 0,
@@ -138,19 +142,24 @@ const StatisticalReportsScreen = () => {
   const [abcPage, setAbcPage] = useState(1);
 
   const deadStockForModalExport = useMemo(
-    () => computeDeadStock(transactions, allProducts, exportModalDeadStockDays),
-    [transactions, allProducts, exportModalDeadStockDays]
+    () => (selectedPeriod === 'yearly'
+      ? deadStock
+      : computeDeadStock(transactions, allProducts, exportModalDeadStockDays)),
+    [selectedPeriod, deadStock, transactions, allProducts, exportModalDeadStockDays]
   );
 
   useEffect(() => {
     loadAnalyticsData();
-  }, [selectedPeriod]);
+  }, [selectedPeriod, selectedYear]);
 
   useEffect(() => {
+    if (selectedPeriod === 'yearly') {
+      return;
+    }
     if (allProducts.length || transactions.length) {
       setDeadStock(computeDeadStock(transactions, allProducts, deadStockDays));
     }
-  }, [deadStockDays, allProducts, transactions]);
+  }, [selectedPeriod, deadStockDays, allProducts, transactions]);
 
   useEffect(() => {
     setDeadStockPage(1);
@@ -164,11 +173,84 @@ const StatisticalReportsScreen = () => {
     try {
       setIsLoading(true);
 
-      // Load transactions and products
-      const [transactionsData, productsData] = await Promise.all([
-        transactionService.getAll(),
+      if (selectedPeriod === 'yearly') {
+        const summary = await analyticsService.getStatisticalSummary({
+          period: 'yearly',
+          year: selectedYear,
+          deadStockDays,
+        });
+
+        setSalesData(summary.salesData || {
+          daily: 0,
+          weekly: 0,
+          monthly: 0,
+          quarterly: 0,
+          yearly: 0,
+        });
+        setRevenueData(summary.revenueData || {
+          revenue: 0,
+          cost: 0,
+          profit: 0,
+          margin: 0,
+          itemsSold: 0,
+        });
+        setTopProducts(summary.topProducts || []);
+        setSalesTrend((summary.salesTrend || []).map((item) => ({
+          date: item.label || item.date,
+          amount: Number(item.sales || 0),
+        })));
+        setCategoryDistribution(summary.categoryDistribution || []);
+        setSalesGrowth(summary.salesGrowth || {
+          weekly: null,
+          monthly: null,
+          quarterly: null,
+          yearly: null,
+        });
+        setHasPreviousData(summary.hasPreviousData || {
+          weekly: false,
+          monthly: false,
+          quarterly: false,
+          yearly: false,
+        });
+        setDeadStock(summary.deadStock || []);
+        setAbcAnalysis(summary.abcAnalysis || []);
+
+        if (Array.isArray(summary.availableYears) && summary.availableYears.length > 0) {
+          setAvailableYears(summary.availableYears);
+        } else if (!availableYears.length) {
+          setAvailableYears([new Date().getFullYear()]);
+        }
+        if (summary.comparisonYear !== undefined) {
+          setComparisonYear(summary.comparisonYear);
+        }
+        return;
+      }
+
+      const daysForPeriod = selectedPeriod === 'weekly'
+        ? 14
+        : selectedPeriod === 'monthly'
+          ? 60
+          : selectedPeriod === 'quarterly'
+            ? 180
+            : 730;
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - daysForPeriod);
+      const startDateText = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+
+      // Fetch bounded transaction history for performance at scale.
+      const [transactionsResponse, productsData] = await Promise.all([
+        transactionService.getPage({
+          paginated: 1,
+          page: 1,
+          limit: 200000,
+          bulk: 1,
+          startDate: startDateText,
+          includeItems: 1,
+        }),
         productService.getAll()
       ]);
+
+      const transactionsData = transactionsResponse?.items || [];
 
       setTransactions(transactionsData || []);
       setAllProducts(productsData || []);
@@ -716,14 +798,21 @@ const StatisticalReportsScreen = () => {
     return `${growth > 0 ? '+' : ''}${growth.toFixed(1)}%`;
   };
 
+  const growthLabel = (value, baselineExists, suffix) => {
+    if (!baselineExists || value === null || value === undefined) {
+      return `N/A vs ${suffix}`;
+    }
+    return `${formatGrowth(value)} vs ${suffix}`;
+  };
+
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className={`${colors.text.secondary}`}>Loading statistical reports...</p>
-        </div>
-      </div>
+      <LazyPageLoader
+        title="Loading statistical reports"
+        subtitle="Crunching period aggregates, growth and category splits..."
+        rows={6}
+        centered
+      />
     );
   }
 
@@ -861,6 +950,15 @@ const StatisticalReportsScreen = () => {
     },
   ];
 
+  const showMonthlyCard = selectedPeriod !== 'weekly';
+  const showYearlyCard = selectedPeriod === 'yearly';
+  const visibleSalesCardCount = 2 + (showMonthlyCard ? 1 : 0) + (showYearlyCard ? 1 : 0);
+  const salesCardsGridClass = visibleSalesCardCount === 4
+    ? 'grid grid-cols-2 lg:grid-cols-4 gap-4'
+    : visibleSalesCardCount === 3
+      ? 'grid grid-cols-1 md:grid-cols-3 gap-4'
+      : 'grid grid-cols-1 md:grid-cols-2 gap-4';
+
   return (
     <>
     <div className="h-full space-y-6 overflow-y-auto">
@@ -887,15 +985,31 @@ const StatisticalReportsScreen = () => {
             <option value="quarterly">Quarterly View</option>
             <option value="yearly">Yearly View</option>
           </select>
+          {selectedPeriod === 'yearly' && (
+            <select
+              className={`border rounded-lg px-3 py-2 ${colors.input.primary}`}
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              title="Select year to view / compare"
+            >
+              {(availableYears.length ? availableYears : [selectedYear]).map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+          )}
           <div className={`flex items-center text-sm ${colors.text.secondary}`}>
             <CalendarIcon className="h-4 w-4 mr-1" />
-            Last updated: {new Date().toLocaleString()}
+            {selectedPeriod === 'yearly' && comparisonYear
+              ? `Comparing ${selectedYear} vs ${comparisonYear}`
+              : `Last updated: ${new Date().toLocaleString()}`}
           </div>
         </div>
       </div>
 
       {/* Key Metrics Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={salesCardsGridClass}>
         <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center justify-between">
             <div>
@@ -909,7 +1023,7 @@ const StatisticalReportsScreen = () => {
           <div className="flex items-center mt-2">
             {getGrowthIcon(salesGrowth.weekly)}
             <span className={`text-sm ml-1 ${getGrowthColor(salesGrowth.weekly)}`}>
-              {formatGrowth(salesGrowth.weekly)} vs last week
+              {growthLabel(salesGrowth.weekly, hasPreviousData.weekly, 'last week')}
             </span>
           </div>
         </div>
@@ -927,12 +1041,13 @@ const StatisticalReportsScreen = () => {
           <div className="flex items-center mt-2">
             {getGrowthIcon(salesGrowth.weekly)}
             <span className={`text-sm ml-1 ${getGrowthColor(salesGrowth.weekly)}`}>
-              {formatGrowth(salesGrowth.weekly)} vs last week
+              {growthLabel(salesGrowth.weekly, hasPreviousData.weekly, 'last week')}
             </span>
           </div>
         </div>
 
-        <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
+        {showMonthlyCard && (
+          <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center justify-between">
             <div>
               <h3 className={`${colors.text.secondary} text-sm`}>Monthly Sales</h3>
@@ -945,12 +1060,14 @@ const StatisticalReportsScreen = () => {
           <div className="flex items-center mt-2">
             {getGrowthIcon(salesGrowth.monthly)}
             <span className={`text-sm ml-1 ${getGrowthColor(salesGrowth.monthly)}`}>
-              {formatGrowth(salesGrowth.monthly)} vs last month
+              {growthLabel(salesGrowth.monthly, hasPreviousData.monthly, 'last month')}
             </span>
           </div>
-        </div>
+          </div>
+        )}
 
-        <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
+        {showYearlyCard && (
+          <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center justify-between">
             <div>
               <h3 className={`${colors.text.secondary} text-sm`}>Yearly Sales</h3>
@@ -963,10 +1080,15 @@ const StatisticalReportsScreen = () => {
           <div className="flex items-center mt-2">
             {getGrowthIcon(salesGrowth.yearly)}
             <span className={`text-sm ml-1 ${getGrowthColor(salesGrowth.yearly)}`}>
-              {formatGrowth(salesGrowth.yearly)} vs last year
+              {growthLabel(
+                salesGrowth.yearly,
+                hasPreviousData.yearly,
+                selectedPeriod === 'yearly' && comparisonYear ? String(comparisonYear) : 'last year'
+              )}
             </span>
           </div>
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Revenue & Profit Cards */}
@@ -980,10 +1102,10 @@ const StatisticalReportsScreen = () => {
         </div>
         <div className={`${colors.card.primary} p-5 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center gap-2 mb-2">
-            <ArrowTrendingDownIcon className="h-4 w-4 text-red-500" />
+            <ArrowTrendingDownIcon className="h-4 w-4 text-amber-500" />
             <h3 className={`${colors.text.secondary} text-xs uppercase tracking-wider font-medium`}>Cost</h3>
           </div>
-          <p className={`text-xl font-bold text-red-600 dark:text-red-400`}>{formatCurrency(revenueData.cost)}</p>
+          <p className={`text-xl font-bold ${colors.text.primary}`}>{formatCurrency(revenueData.cost)}</p>
         </div>
         <div className={`${colors.card.primary} p-5 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center gap-2 mb-2">
@@ -1013,21 +1135,21 @@ const StatisticalReportsScreen = () => {
       </div>
 
       {/* Charts Row 1 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary} lg:col-span-8`}>
           <h2 className={`text-lg font-semibold mb-4 ${colors.text.primary}`}>
             Sales Trend ({selectedPeriod})
           </h2>
-          <div className="h-64">
+          <div className="h-72">
             <Line data={salesTrendData} options={chartOptions} />
           </div>
         </div>
 
-        <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
+        <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary} lg:col-span-4`}>
           <h2 className={`text-lg font-semibold mb-4 ${colors.text.primary}`}>
             Sales by Category ({selectedPeriod})
           </h2>
-          <div className="h-64">
+          <div className="h-56">
             <Doughnut data={categoryData} options={chartOptions} />
           </div>
         </div>

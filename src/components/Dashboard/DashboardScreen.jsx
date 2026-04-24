@@ -14,10 +14,11 @@ import {
   ArrowDownIcon,
   DocumentTextIcon,
 } from '@heroicons/react/24/outline';
-import { productService, transactionService } from '../../services/api';
+import { analyticsService } from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useSettings } from '../../context/SettingsContext';
 import { formatCurrency } from '../../utils/formatters';
+import LazyPageLoader from '../common/LazyPageLoader';
 
 import {
   Chart as ChartJS,
@@ -73,133 +74,45 @@ const DashboardScreen = () => {
   const [recentTransactions, setRecentTransactions] = useState([]);
   const [topProducts, setTopProducts] = useState([]);
   const [alerts, setAlerts] = useState([]);
-  const [allTransactions, setAllTransactions] = useState([]);
+  const [salesTrendData, setSalesTrendData] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState('weekly');
 
   useEffect(() => {
     loadDashboardData();
-  }, []);
-
-  const calculateDateRanges = () => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const twoWeeksAgo = new Date(today.getTime() - 14 * 24 * 60 * 60 * 1000);
-    const twoMonthsAgo = new Date(today.getTime() - 60 * 24 * 60 * 60 * 1000);
-
-    return { today, weekAgo, monthAgo, twoWeeksAgo, twoMonthsAgo };
-  };
+  }, [selectedPeriod, settings.lowStockThreshold]);
 
   const loadDashboardData = async () => {
     try {
       setIsLoading(true);
-
-      const [products, transactions] = await Promise.all([
-        productService.getAll(),
-        transactionService.getAll()
-      ]);
-
-      setAllTransactions(transactions);
-
-      // Summary
-      const totalProducts = products.length;
-      const outOfStock = products.filter(p => p.quantity === 0).length;
-      const lowStock = products.filter(p => p.quantity > 0 && p.quantity <= (settings.lowStockThreshold ?? 10)).length;
-      const totalStock = products.reduce((sum, p) => sum + (p.quantity || 0), 0);
-      setSummary({ totalProducts, outOfStock, lowStock, totalStock });
-
-      const { today, weekAgo, monthAgo, twoWeeksAgo, twoMonthsAgo } = calculateDateRanges();
-
-      // Sales Metrics
-      const dailyTransactions = transactions.filter(t => new Date(t.timestamp) >= today);
-      const weeklyTransactions = transactions.filter(t => new Date(t.timestamp) >= weekAgo);
-      const monthlyTransactions = transactions.filter(t => new Date(t.timestamp) >= monthAgo);
-      const previousWeekTransactions = transactions.filter(t => {
-        const date = new Date(t.timestamp);
-        return date >= twoWeeksAgo && date < weekAgo;
-      });
-      const previousMonthTransactions = transactions.filter(t => {
-        const date = new Date(t.timestamp);
-        return date >= twoMonthsAgo && date < monthAgo;
+      const data = await analyticsService.getDashboardSummary({
+        period: selectedPeriod,
+        lowStockThreshold: settings.lowStockThreshold ?? 10,
       });
 
-      const dailySales = dailyTransactions.reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
-      const weeklySales = weeklyTransactions.reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
-      const monthlySales = monthlyTransactions.reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
-      const totalSales = transactions.reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
-
-      const previousWeekSales = previousWeekTransactions.reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
-      const previousMonthSales = previousMonthTransactions.reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
-
-      const weeklyGrowth = previousWeekSales > 0 ? ((weeklySales - previousWeekSales) / previousWeekSales * 100).toFixed(1) : weeklySales > 0 ? 100 : 0;
-      const monthlyGrowth = previousMonthSales > 0 ? ((monthlySales - previousMonthSales) / previousMonthSales * 100).toFixed(1) : monthlySales > 0 ? 100 : 0;
-      const averageOrderValue = transactions.length > 0 ? totalSales / transactions.length : 0;
-
-      // Calculate total cost and gross profit
-      const totalCost = transactions.reduce((sum, t) => {
-        const tCost = (t.items || []).reduce((itemSum, item) => itemSum + ((parseFloat(item.cost) || parseFloat(item.unit_cost) || 0) * (item.quantity || 1)), 0);
-        return sum + tCost;
-      }, 0);
-      const currentPeriodCost = (selectedPeriod === 'weekly' ? weeklyTransactions : monthlyTransactions).reduce((sum, t) => {
-        const tCost = (t.items || []).reduce((itemSum, item) => itemSum + ((parseFloat(item.cost) || parseFloat(item.unit_cost) || 0) * (item.quantity || 1)), 0);
-        return sum + tCost;
-      }, 0);
-
-      const grossProfit = totalSales - totalCost;
-      const currentPeriodProfit = (selectedPeriod === 'weekly' ? weeklySales : monthlySales) - currentPeriodCost;
-
-      setSalesMetrics({
-        totalSales, dailySales, weeklySales, monthlySales,
-        weeklyGrowth: parseFloat(weeklyGrowth),
-        monthlyGrowth: parseFloat(monthlyGrowth),
-        averageOrderValue,
-        totalTransactions: transactions.length,
-        totalCost,
-        currentPeriodCost,
-        grossProfit,
-        currentPeriodProfit
+      setSummary(data.summary || {
+        totalProducts: 0,
+        lowStock: 0,
+        outOfStock: 0,
+        totalStock: 0,
       });
-
-      // Recent Transactions
-      const recent = transactions
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-        .slice(0, 4)
-        .map(t => ({
-          id: t.id,
-          productName: t.items?.[0]?.name || 'Multiple Items',
-          date: new Date(t.timestamp).toLocaleDateString(),
-          time: new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          amount: parseFloat(t.total) || 0,
-          items: t.items?.length || 1
-        }));
-      setRecentTransactions(recent);
-
-      // Top Products
-      const productSales = {};
-      transactions.forEach(transaction => {
-        transaction.items?.forEach(item => {
-          if (!productSales[item.productId]) {
-            productSales[item.productId] = {
-              id: item.productId,
-              name: item.name,
-              category: item.category || 'Uncategorized',
-              sales: 0,
-              revenue: 0
-            };
-          }
-          productSales[item.productId].sales += item.quantity || 0;
-          productSales[item.productId].revenue += (item.quantity || 0) * (item.price || 0);
-        });
+      setSalesMetrics(data.salesMetrics || {
+        totalSales: 0,
+        dailySales: 0,
+        weeklySales: 0,
+        monthlySales: 0,
+        weeklyGrowth: 0,
+        monthlyGrowth: 0,
+        averageOrderValue: 0,
+        totalTransactions: 0,
       });
+      setRecentTransactions(data.recentTransactions || []);
+      setTopProducts(data.topProducts || []);
+      setSalesTrendData(data.salesTrend || []);
 
-      const topProductsList = Object.values(productSales)
-        .sort((a, b) => b.sales - a.sales)
-        .slice(0, 5);
-      setTopProducts(topProductsList);
-
-      // Alerts
+      // Alerts based on server summary
+      const outOfStock = Number(data?.summary?.outOfStock || 0);
+      const lowStock = Number(data?.summary?.lowStock || 0);
       const alertsList = [];
       if (outOfStock > 0) alertsList.push({
         id: 'out-of-stock',
@@ -226,7 +139,6 @@ const DashboardScreen = () => {
         actionUrl: '/statistical-reports'
       });
       setAlerts(alertsList);
-
     } catch (error) {
       console.error('Error loading dashboard data:', error);
       toast.error('Failed to load dashboard data');
@@ -251,23 +163,19 @@ const DashboardScreen = () => {
     }
   };
 
+  const formatPercent = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '0.0%';
+    const rounded = Math.round(numeric * 10) / 10;
+    return `${rounded > 0 ? '+' : ''}${rounded.toFixed(1)}%`;
+  };
+
   // --- Chart Data Preparation ---
   const chartData = useMemo(() => {
-    const days = selectedPeriod === 'weekly' ? 7 : 30;
-    const dates = [];
-    const sales = [];
-
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      dates.push(d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
-
-      const dayTotal = allTransactions.filter(t => {
-        const td = new Date(t.timestamp);
-        return td.getDate() === d.getDate() && td.getMonth() === d.getMonth() && td.getFullYear() === d.getFullYear();
-      }).reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
-      sales.push(dayTotal);
-    }
+    const dates = (salesTrendData || []).map((item) =>
+      new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    );
+    const sales = (salesTrendData || []).map((item) => Number(item.total || item.sales || 0));
 
     const gridColor = isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
     const textColor = isDarkMode ? '#94a3b8' : '#64748b';
@@ -331,17 +239,17 @@ const DashboardScreen = () => {
         interaction: { mode: 'nearest', axis: 'x', intersect: false }
       }
     };
-  }, [allTransactions, selectedPeriod, topProducts, isDarkMode]);
+  }, [salesTrendData, topProducts, isDarkMode]);
 
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500/30 border-t-purple-500 mx-auto mb-4"></div>
-          <p className={`text-lg font-medium ${colors.text.primary}`}>Loading dashboard...</p>
-        </div>
-      </div>
+      <LazyPageLoader
+        title="Loading dashboard"
+        subtitle="Crunching summary metrics and charts..."
+        rows={4}
+        centered
+      />
     );
   }
 
@@ -384,14 +292,14 @@ const DashboardScreen = () => {
           icon={CurrencyDollarIcon}
           color="#8b5cf6" // purple
           trend={currentPeriodData.growth > 0 ? 'up' : currentPeriodData.growth < 0 ? 'down' : null}
-          trendValue={`${currentPeriodData.growth > 0 ? '+' : ''}${currentPeriodData.growth}%`}
+          trendValue={formatPercent(currentPeriodData.growth)}
           description="vs prev period"
         />
         <StatCard
           title={`${currentPeriodData.period} Total Cost`}
           value={`₱${(salesMetrics.currentPeriodCost || 0).toLocaleString()}`}
           icon={ChartBarIcon}
-          color="#f43f5e" // rose
+          color="#f59e0b" // amber
           description="COGS"
         />
         <StatCard

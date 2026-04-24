@@ -15,6 +15,7 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline';
 import ModalPortal from '../common/ModalPortal';
+import LazyPageLoader from '../common/LazyPageLoader';
 
 // Facebook/Messenger Icon
 const FacebookIcon = () => (
@@ -180,9 +181,13 @@ const SuppliersScreen = () => {
       {/* Suppliers Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {isLoading ? (
-          <div className={`col-span-full text-center py-12 ${colors.text.secondary}`}>
-            <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500/30 border-t-blue-500 mx-auto mb-4"></div>
-            Loading suppliers...
+          <div className="col-span-full">
+            <LazyPageLoader
+              title="Loading suppliers"
+              subtitle="Fetching supplier list..."
+              rows={4}
+              centered={false}
+            />
           </div>
         ) : suppliers.length === 0 ? (
           <div className={`col-span-full text-center py-12 ${colors.text.secondary}`}>

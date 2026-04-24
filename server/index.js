@@ -2277,52 +2277,237 @@ app.get('/api/stock-adjustments/:id', async (req, res) => {
 
 // Transaction Management Routes
 
-// Get all transactions (excluding archived)
+const TRANSACTION_DEFAULT_LIMIT = 50;
+const TRANSACTION_MAX_LIMIT = 500;
+
+function toInt(value, fallback) {
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toBool(value, fallback = false) {
+  if (value === undefined || value === null) return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function normalizeDateStart(value) {
+  if (!value) return null;
+  return String(value).length <= 10 ? `${value} 00:00:00` : value;
+}
+
+function normalizeDateEnd(value) {
+  if (!value) return null;
+  return String(value).length <= 10 ? `${value} 00:00:00` : value;
+}
+
+function buildTransactionsWhere({
+  archivedOnly = false,
+  startDate,
+  endDate,
+  search,
+  cashier,
+  paymentMethod,
+}) {
+  const clauses = [];
+  const params = [];
+
+  clauses.push(archivedOnly ? 'archived_at IS NOT NULL' : 'archived_at IS NULL');
+
+  const normalizedStart = normalizeDateStart(startDate);
+  const normalizedEnd = normalizeDateEnd(endDate);
+  if (normalizedStart && normalizedEnd) {
+    clauses.push('timestamp >= ? AND timestamp < datetime(?, \'+1 day\')');
+    params.push(normalizedStart, normalizedEnd);
+  } else if (normalizedStart) {
+    clauses.push('timestamp >= ?');
+    params.push(normalizedStart);
+  } else if (normalizedEnd) {
+    clauses.push('timestamp < datetime(?, \'+1 day\')');
+    params.push(normalizedEnd);
+  }
+
+  if (search) {
+    clauses.push('(lower(id) LIKE ? OR lower(COALESCE(reference_number, \'\')) LIKE ? OR lower(COALESCE(user_name, \'\')) LIKE ?)');
+    const pattern = `%${String(search).toLowerCase()}%`;
+    params.push(pattern, pattern, pattern);
+  }
+
+  if (cashier) {
+    clauses.push('lower(COALESCE(user_name, \'system\')) = ?');
+    params.push(String(cashier).toLowerCase());
+  }
+
+  if (paymentMethod) {
+    clauses.push('lower(COALESCE(payment_method, \'cash\')) = ?');
+    params.push(String(paymentMethod).toLowerCase());
+  }
+
+  return {
+    whereSql: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+    params,
+  };
+}
+
+function parseTransactionItems(rows, includeItems) {
+  if (!includeItems) return rows;
+  return rows.map((transaction) => ({
+    ...transaction,
+    items: transaction.items ? JSON.parse(transaction.items) : [],
+  }));
+}
+
+function fetchTransactionsList(req, archivedOnly = false) {
+  const {
+    startDate,
+    endDate,
+    search,
+    cashier,
+    paymentMethod,
+    page,
+    limit,
+    paginated,
+    includeItems,
+  } = req.query;
+
+  const shouldPaginate = toBool(paginated, false) || page !== undefined || limit !== undefined;
+  const limitCap = toBool(req.query.bulk, false) ? 200000 : TRANSACTION_MAX_LIMIT;
+  const parsedPage = Math.max(1, toInt(page, 1));
+  const parsedLimit = Math.min(limitCap, Math.max(1, toInt(limit, TRANSACTION_DEFAULT_LIMIT)));
+  const offset = (parsedPage - 1) * parsedLimit;
+  const shouldIncludeItems = toBool(includeItems, true);
+
+  const { whereSql, params } = buildTransactionsWhere({
+    archivedOnly,
+    startDate,
+    endDate,
+    search,
+    cashier,
+    paymentMethod,
+  });
+
+  const sortField = archivedOnly ? 'archived_at' : 'timestamp';
+  const columns = shouldIncludeItems
+    ? 'id, timestamp, items, subtotal, tax, total, payment_method, received_amount, change_amount, reference_number, user_id, user_name, user_email, archived_at'
+    : 'id, timestamp, subtotal, tax, total, payment_method, received_amount, change_amount, reference_number, user_id, user_name, user_email, archived_at';
+
+  let listSql = `SELECT ${columns} FROM transactions ${whereSql} ORDER BY ${sortField} DESC`;
+  const listParams = [...params];
+
+  if (shouldPaginate) {
+    listSql += ' LIMIT ? OFFSET ?';
+    listParams.push(parsedLimit, offset);
+  }
+
+  const [rows] = execute(listSql, listParams);
+  const items = parseTransactionItems(rows, shouldIncludeItems);
+
+  if (!shouldPaginate) {
+    return items;
+  }
+
+  const [countRows] = execute(`SELECT COUNT(*) AS total FROM transactions ${whereSql}`, params);
+  const total = Number(countRows?.[0]?.total || 0);
+  const hasNextPage = offset + items.length < total;
+
+  return {
+    items,
+    total,
+    page: parsedPage,
+    limit: parsedLimit,
+    hasNextPage,
+  };
+}
+
+// Get transactions (supports pagination/filtering)
 app.get('/api/transactions', async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    let query = 'SELECT * FROM transactions WHERE archived_at IS NULL ORDER BY timestamp DESC';
-    let params = [];
-
-    if (startDate && endDate) {
-      query = 'SELECT * FROM transactions WHERE archived_at IS NULL AND timestamp BETWEEN ? AND ? ORDER BY timestamp DESC';
-      params = [startDate, endDate];
+    const response = fetchTransactionsList(req, false);
+    if (Array.isArray(response)) {
+      console.log('Transactions fetched (legacy):', response.length);
+    } else {
+      console.log('Transactions fetched (paged):', response.items.length, 'total:', response.total);
     }
-
-    const [rows] = execute(query, params);
-
-    // Parse items JSON for each transaction
-    const transactions = rows.map(transaction => ({
-      ...transaction,
-      items: transaction.items ? JSON.parse(transaction.items) : []
-    }));
-
-    console.log('Transactions fetched:', transactions.length);
-    res.json(transactions);
+    res.json(response);
   } catch (error) {
     console.error('Error fetching transactions:', error);
     res.status(500).json({ error: 'Failed to fetch transactions' });
   }
 });
 
-// Get all archived transactions (admin only)
+// Get archived transactions (supports pagination/filtering)
 app.get('/api/transactions/archived', async (req, res) => {
   try {
-    const [rows] = await execute(
-      'SELECT * FROM transactions WHERE archived_at IS NOT NULL ORDER BY archived_at DESC'
-    );
-
-    // Parse items JSON for each transaction
-    const transactions = rows.map(transaction => ({
-      ...transaction,
-      items: transaction.items ? JSON.parse(transaction.items) : []
-    }));
-
-    console.log('Archived transactions fetched:', transactions.length);
-    res.json(transactions);
+    const response = fetchTransactionsList(req, true);
+    if (Array.isArray(response)) {
+      console.log('Archived transactions fetched (legacy):', response.length);
+    } else {
+      console.log('Archived transactions fetched (paged):', response.items.length, 'total:', response.total);
+    }
+    res.json(response);
   } catch (error) {
     console.error('Error fetching archived transactions:', error);
     res.status(500).json({ error: 'Failed to fetch archived transactions' });
+  }
+});
+
+app.get('/api/transactions/summary', async (req, res) => {
+  try {
+    const { startDate, endDate, cashier, paymentMethod } = req.query;
+    const { whereSql, params } = buildTransactionsWhere({
+      archivedOnly: false,
+      startDate,
+      endDate,
+      cashier,
+      paymentMethod,
+    });
+
+    const [summaryRows] = execute(
+      `SELECT
+        COUNT(*) AS totalTransactions,
+        COALESCE(SUM(total), 0) AS totalSales,
+        COALESCE(AVG(total), 0) AS averageTransaction
+      FROM transactions
+      ${whereSql}`,
+      params
+    );
+
+    const [todayRows] = execute(
+      `SELECT COALESCE(SUM(total), 0) AS todaySales
+      FROM transactions
+      ${whereSql ? `${whereSql} AND` : 'WHERE'} date(timestamp) = date('now', 'localtime')`,
+      params
+    );
+
+    const [cashierRows] = execute(
+      `SELECT DISTINCT COALESCE(user_name, 'System') AS name
+      FROM transactions
+      ${whereSql}
+      ORDER BY name ASC`,
+      params
+    );
+
+    const [methodRows] = execute(
+      `SELECT DISTINCT lower(COALESCE(payment_method, 'cash')) AS method
+      FROM transactions
+      ${whereSql}
+      ORDER BY method ASC`,
+      params
+    );
+
+    res.json({
+      totalSales: Number(summaryRows?.[0]?.totalSales || 0),
+      totalTransactions: Number(summaryRows?.[0]?.totalTransactions || 0),
+      averageTransaction: Number(summaryRows?.[0]?.averageTransaction || 0),
+      todaySales: Number(todayRows?.[0]?.todaySales || 0),
+      cashiers: cashierRows.map((row) => row.name).filter(Boolean),
+      paymentMethods: methodRows.map((row) => row.method).filter(Boolean),
+    });
+  } catch (error) {
+    console.error('Error fetching transaction summary:', error);
+    res.status(500).json({ error: 'Failed to fetch transaction summary' });
   }
 });
 
@@ -2911,7 +3096,772 @@ app.post('/api/audits', async (req, res) => {
 
 // Analytics Routes
 
-// Get sales analytics
+app.get('/api/dashboard/summary', async (req, res) => {
+  try {
+    const period = req.query.period === 'monthly' ? 'monthly' : 'weekly';
+    const lowStockThreshold = Math.max(1, toInt(req.query.lowStockThreshold, 10));
+    const periodDays = period === 'monthly' ? 30 : 7;
+
+    const [productRows] = execute(
+      `SELECT
+        COUNT(*) AS totalProducts,
+        SUM(CASE WHEN quantity = 0 THEN 1 ELSE 0 END) AS outOfStock,
+        SUM(CASE WHEN quantity > 0 AND quantity <= ? THEN 1 ELSE 0 END) AS lowStock,
+        COALESCE(SUM(quantity), 0) AS totalStock
+      FROM products
+      WHERE deleted_at IS NULL`,
+      [lowStockThreshold]
+    );
+
+    const [metricsRows] = execute(
+      `SELECT
+        COALESCE(SUM(total), 0) AS totalSales,
+        COUNT(*) AS totalTransactions,
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', 'start of day') THEN total ELSE 0 END), 0) AS dailySales,
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS weeklySales,
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS monthlySales,
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-14 days') AND timestamp < datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS previousWeekSales,
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-60 days') AND timestamp < datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS previousMonthSales
+      FROM transactions
+      WHERE archived_at IS NULL`
+    );
+
+    const [periodCostRows] = execute(
+      `SELECT
+        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_cost, 0)), 0) AS periodCost
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      WHERE t.archived_at IS NULL
+        AND t.timestamp >= datetime('now', ?)`,
+      [`-${periodDays} days`]
+    );
+
+    const [recentRows] = execute(
+      `SELECT
+        t.id,
+        t.timestamp,
+        t.total,
+        COALESCE(t.user_name, 'System') AS user_name,
+        COUNT(ti.id) AS item_count
+      FROM transactions t
+      LEFT JOIN transaction_items ti ON ti.transaction_id = t.id
+      WHERE t.archived_at IS NULL
+      GROUP BY t.id, t.timestamp, t.total, t.user_name
+      ORDER BY t.timestamp DESC
+      LIMIT 4`
+    );
+
+    const [topRows] = execute(
+      `SELECT
+        ti.product_id AS id,
+        COALESCE(p.name, 'Unknown Product') AS name,
+        COALESCE(p.category_name, 'Uncategorized') AS category,
+        COALESCE(SUM(ti.quantity), 0) AS sales,
+        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      LEFT JOIN products p ON p.id = ti.product_id
+      WHERE t.archived_at IS NULL
+        AND t.timestamp >= datetime('now', ?)
+      GROUP BY ti.product_id
+      ORDER BY sales DESC
+      LIMIT 5`,
+      [`-${periodDays} days`]
+    );
+
+    const [trendRows] = execute(
+      `SELECT
+        date(timestamp) AS sale_date,
+        COALESCE(SUM(total), 0) AS total
+      FROM transactions
+      WHERE archived_at IS NULL
+        AND timestamp >= datetime('now', ?)
+      GROUP BY date(timestamp)
+      ORDER BY sale_date ASC`,
+      [`-${periodDays - 1} days`]
+    );
+
+    const trendMap = new Map((trendRows || []).map((row) => [row.sale_date, Number(row.total || 0)]));
+    const salesTrend = [];
+    for (let i = periodDays - 1; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      salesTrend.push({
+        date: key,
+        total: trendMap.get(key) || 0,
+      });
+    }
+
+    const metrics = metricsRows?.[0] || {};
+    const totalSales = Number(metrics.totalSales || 0);
+    const totalTransactions = Number(metrics.totalTransactions || 0);
+    const weeklySales = Number(metrics.weeklySales || 0);
+    const monthlySales = Number(metrics.monthlySales || 0);
+    const previousWeekSales = Number(metrics.previousWeekSales || 0);
+    const previousMonthSales = Number(metrics.previousMonthSales || 0);
+    const weeklyGrowth = previousWeekSales > 0 ? ((weeklySales - previousWeekSales) / previousWeekSales) * 100 : (weeklySales > 0 ? 100 : 0);
+    const monthlyGrowth = previousMonthSales > 0 ? ((monthlySales - previousMonthSales) / previousMonthSales) * 100 : (monthlySales > 0 ? 100 : 0);
+    const averageOrderValue = totalTransactions > 0 ? totalSales / totalTransactions : 0;
+    const periodCost = Number(periodCostRows?.[0]?.periodCost || 0);
+
+    const response = {
+      summary: {
+        totalProducts: Number(productRows?.[0]?.totalProducts || 0),
+        outOfStock: Number(productRows?.[0]?.outOfStock || 0),
+        lowStock: Number(productRows?.[0]?.lowStock || 0),
+        totalStock: Number(productRows?.[0]?.totalStock || 0),
+      },
+      salesMetrics: {
+        totalSales,
+        dailySales: Number(metrics.dailySales || 0),
+        weeklySales,
+        monthlySales,
+        weeklyGrowth: Number(weeklyGrowth || 0),
+        monthlyGrowth: Number(monthlyGrowth || 0),
+        averageOrderValue,
+        totalTransactions,
+        // Keep dashboard cost/profit scoped to the selected period for faster queries.
+        totalCost: periodCost,
+        currentPeriodCost: periodCost,
+        grossProfit: (period === 'monthly' ? monthlySales : weeklySales) - periodCost,
+        currentPeriodProfit: (period === 'monthly' ? monthlySales : weeklySales) - periodCost,
+      },
+      recentTransactions: (recentRows || []).map((row) => ({
+        id: row.id,
+        productName: 'Multiple Items',
+        date: new Date(row.timestamp).toLocaleDateString(),
+        time: new Date(row.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        amount: Number(row.total || 0),
+        items: Number(row.item_count || 0),
+      })),
+      topProducts: (topRows || []).map((row) => ({
+        id: row.id,
+        name: row.name,
+        category: row.category,
+        sales: Number(row.sales || 0),
+        revenue: Number(row.revenue || 0),
+      })),
+      salesTrend,
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Error fetching dashboard summary:', error);
+    res.status(500).json({ error: 'Failed to fetch dashboard summary' });
+  }
+});
+
+app.get('/api/reports/summary', async (req, res) => {
+  try {
+    const {
+      startDate,
+      endDate,
+      transactionPage,
+      transactionLimit,
+      movementPage,
+      movementLimit,
+      category,
+      paymentMethod,
+      minAmount,
+      maxAmount,
+    } = req.query;
+
+    const txPage = Math.max(1, toInt(transactionPage, 1));
+    const txLimit = Math.min(TRANSACTION_MAX_LIMIT, Math.max(1, toInt(transactionLimit, 50)));
+    const txOffset = (txPage - 1) * txLimit;
+    const mvPage = Math.max(1, toInt(movementPage, 1));
+    const mvLimit = Math.min(TRANSACTION_MAX_LIMIT, Math.max(1, toInt(movementLimit, 100)));
+    const mvOffset = (mvPage - 1) * mvLimit;
+    const normalizedPaymentMethod = typeof paymentMethod === 'string' ? paymentMethod.trim().toLowerCase() : '';
+    const normalizedCategory = typeof category === 'string' ? category.trim() : '';
+    const minAmountValue = Number(minAmount);
+    const maxAmountValue = Number(maxAmount);
+
+    const whereParts = ['t.archived_at IS NULL'];
+    const whereParams = [];
+    const normalizedStart = normalizeDateStart(startDate);
+    const normalizedEnd = normalizeDateEnd(endDate);
+    if (normalizedStart && normalizedEnd) {
+      whereParts.push('t.timestamp >= ? AND t.timestamp < datetime(?, \'+1 day\')');
+      whereParams.push(normalizedStart, normalizedEnd);
+    } else if (normalizedStart) {
+      whereParts.push('t.timestamp >= ?');
+      whereParams.push(normalizedStart);
+    } else if (normalizedEnd) {
+      whereParts.push('t.timestamp < datetime(?, \'+1 day\')');
+      whereParams.push(normalizedEnd);
+    }
+    if (normalizedPaymentMethod) {
+      whereParts.push('LOWER(COALESCE(t.payment_method, \'cash\')) = ?');
+      whereParams.push(normalizedPaymentMethod);
+    }
+    if (Number.isFinite(minAmountValue)) {
+      whereParts.push('COALESCE(t.total, 0) >= ?');
+      whereParams.push(minAmountValue);
+    }
+    if (Number.isFinite(maxAmountValue)) {
+      whereParts.push('COALESCE(t.total, 0) <= ?');
+      whereParams.push(maxAmountValue);
+    }
+    if (normalizedCategory) {
+      whereParts.push(`EXISTS (
+        SELECT 1
+        FROM transaction_items tfi
+        LEFT JOIN products pf ON pf.id = tfi.product_id
+        WHERE tfi.transaction_id = t.id
+          AND COALESCE(pf.category_name, 'Uncategorized') = ?
+      )`);
+      whereParams.push(normalizedCategory);
+    }
+    const whereSql = `WHERE ${whereParts.join(' AND ')}`;
+    const itemCategoryClause = normalizedCategory
+      ? `AND COALESCE(p.category_name, 'Uncategorized') = ?`
+      : '';
+    const itemCategoryParams = normalizedCategory ? [normalizedCategory] : [];
+
+    const [dailyRows] = execute(
+      `SELECT
+        date(t.timestamp) AS date,
+        COUNT(DISTINCT t.id) AS transactions,
+        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue,
+        COALESCE(SUM(ti.quantity), 0) AS itemsSold
+      FROM transactions t
+      JOIN transaction_items ti ON ti.transaction_id = t.id
+      LEFT JOIN products p ON p.id = ti.product_id
+      ${whereSql}
+      ${itemCategoryClause}
+      GROUP BY date(t.timestamp)
+      ORDER BY date(t.timestamp) ASC`,
+      [...whereParams, ...itemCategoryParams]
+    );
+
+    const [productRows] = execute(
+      `SELECT
+        ti.product_id AS productId,
+        COALESCE(p.name, 'Unknown Product') AS name,
+        COALESCE(p.category_name, 'Uncategorized') AS category,
+        COALESCE(SUM(ti.quantity), 0) AS unitsSold,
+        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      LEFT JOIN products p ON p.id = ti.product_id
+      ${whereSql}
+      ${itemCategoryClause}
+      GROUP BY ti.product_id
+      ORDER BY revenue DESC`,
+      [...whereParams, ...itemCategoryParams]
+    );
+
+    const [categoryRows] = execute(
+      `SELECT
+        COALESCE(p.category_name, 'Uncategorized') AS category,
+        COALESCE(SUM(ti.quantity), 0) AS unitsSold,
+        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      LEFT JOIN products p ON p.id = ti.product_id
+      ${whereSql}
+      ${itemCategoryClause}
+      GROUP BY COALESCE(p.category_name, 'Uncategorized')
+      ORDER BY revenue DESC`,
+      [...whereParams, ...itemCategoryParams]
+    );
+
+    const [itemTotalRows] = execute(
+      `SELECT COALESCE(SUM(ti.quantity), 0) AS totalItemsSold
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      LEFT JOIN products p ON p.id = ti.product_id
+      ${whereSql}
+      ${itemCategoryClause}`,
+      [...whereParams, ...itemCategoryParams]
+    );
+
+    const [txRows] = execute(
+      `SELECT id, timestamp, items, total, payment_method, user_name
+      FROM transactions t
+      ${whereSql}
+      ORDER BY t.timestamp DESC
+      LIMIT ? OFFSET ?`,
+      [...whereParams, txLimit, txOffset]
+    );
+    const [txCountRows] = execute(`SELECT COUNT(*) AS total FROM transactions t ${whereSql}`, whereParams);
+
+    const [movementRows] = execute(
+      `SELECT
+        t.id AS transaction_id,
+        t.timestamp,
+        ti.product_id,
+        COALESCE(p.name, 'Unknown Product') AS product_name,
+        COALESCE(p.category_name, 'Uncategorized') AS category,
+        ti.quantity,
+        COALESCE(ti.unit_price, 0) AS unit_price,
+        COALESCE(ti.quantity * COALESCE(ti.unit_price, 0), 0) AS total_value
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      LEFT JOIN products p ON p.id = ti.product_id
+      ${whereSql}
+      ${itemCategoryClause}
+      ORDER BY t.timestamp DESC
+      LIMIT ? OFFSET ?`,
+      [...whereParams, ...itemCategoryParams, mvLimit, mvOffset]
+    );
+    const [movementCountRows] = execute(
+      `SELECT COUNT(*) AS total
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      LEFT JOIN products p ON p.id = ti.product_id
+      ${whereSql}
+      ${itemCategoryClause}`,
+      [...whereParams, ...itemCategoryParams]
+    );
+
+    const [restockingRows] = execute(
+      `SELECT
+        id AS productId,
+        name AS productName,
+        COALESCE(category_name, 'Uncategorized') AS category,
+        quantity AS currentStock,
+        CASE WHEN quantity <= ? THEN 'LOW_STOCK' ELSE 'ADEQUATE' END AS status
+      FROM products
+      WHERE deleted_at IS NULL
+      ORDER BY quantity ASC`,
+      [10]
+    );
+    const [categoryOptionRows] = execute(
+      `SELECT DISTINCT COALESCE(category_name, 'Uncategorized') AS category
+      FROM products
+      WHERE deleted_at IS NULL
+      ORDER BY category ASC`
+    );
+
+    const totalTransactions = Number(txCountRows?.[0]?.total || 0);
+    const totalRevenue = (dailyRows || []).reduce((sum, row) => sum + Number(row.revenue || 0), 0);
+
+    res.json({
+      sales: {
+        dailySales: (dailyRows || []).map((row) => ({
+          date: row.date,
+          transactions: Number(row.transactions || 0),
+          revenue: Number(row.revenue || 0),
+          itemsSold: Number(row.itemsSold || 0),
+        })),
+        productSales: (productRows || []).map((row) => ({
+          productId: row.productId,
+          name: row.name,
+          category: row.category,
+          unitsSold: Number(row.unitsSold || 0),
+          revenue: Number(row.revenue || 0),
+        })),
+        categorySales: (categoryRows || []).map((row) => ({
+          category: row.category,
+          unitsSold: Number(row.unitsSold || 0),
+          revenue: Number(row.revenue || 0),
+        })),
+        summary: {
+          totalTransactions,
+          totalRevenue,
+          totalItemsSold: Number(itemTotalRows?.[0]?.totalItemsSold || 0),
+          avgTransactionValue: totalTransactions > 0 ? totalRevenue / totalTransactions : 0,
+        },
+      },
+      transactions: {
+        items: (txRows || []).map((row) => ({
+          ...row,
+          items: row.items ? JSON.parse(row.items) : [],
+          paymentMethod: row.payment_method || 'cash',
+        })),
+        total: Number(txCountRows?.[0]?.total || 0),
+        page: txPage,
+        limit: txLimit,
+        hasNextPage: txOffset + (txRows?.length || 0) < Number(txCountRows?.[0]?.total || 0),
+      },
+      stockMovement: {
+        items: (movementRows || []).map((row) => ({
+          id: `${row.transaction_id}-${row.product_id}`,
+          timestamp: row.timestamp,
+          productId: row.product_id,
+          productName: row.product_name,
+          category: row.category,
+          type: 'SALE',
+          quantity: -Number(row.quantity || 0),
+          unitPrice: Number(row.unit_price || 0),
+          totalValue: Number(row.total_value || 0),
+          reference: row.transaction_id,
+          description: `Sale - Transaction ${row.transaction_id}`,
+        })),
+        total: Number(movementCountRows?.[0]?.total || 0),
+        page: mvPage,
+        limit: mvLimit,
+        hasNextPage: mvOffset + (movementRows?.length || 0) < Number(movementCountRows?.[0]?.total || 0),
+      },
+      restocking: restockingRows || [],
+      availableCategories: (categoryOptionRows || []).map((row) => row.category).filter(Boolean),
+    });
+  } catch (error) {
+    console.error('Error fetching reports summary:', error);
+    res.status(500).json({ error: 'Failed to fetch reports summary' });
+  }
+});
+
+app.get('/api/statistical-reports/summary', async (req, res) => {
+  try {
+    const period = ['weekly', 'monthly', 'quarterly', 'yearly'].includes(req.query.period)
+      ? req.query.period
+      : 'monthly';
+    const deadStockDays = Math.max(1, toInt(req.query.deadStockDays, 60));
+    const periodDays = period === 'weekly' ? 7 : period === 'monthly' ? 30 : period === 'quarterly' ? 90 : 365;
+
+    // Year selection is only meaningful for the yearly view. Default to the current year.
+    let selectedYear = null;
+    let comparisonYear = null;
+    let yearlyRangeStart = null;
+    let yearlyRangeEnd = null;
+    let yearlyPreviousStart = null;
+    let yearlyPreviousEnd = null;
+    if (period === 'yearly') {
+      const parsedYear = toInt(req.query.year, 0);
+      const nowYear = new Date().getFullYear();
+      selectedYear = parsedYear >= 2000 && parsedYear <= nowYear + 1 ? parsedYear : nowYear;
+      comparisonYear = selectedYear - 1;
+      yearlyRangeStart = `${selectedYear}-01-01 00:00:00`;
+      yearlyRangeEnd = `${selectedYear + 1}-01-01 00:00:00`;
+      yearlyPreviousStart = `${comparisonYear}-01-01 00:00:00`;
+      yearlyPreviousEnd = `${selectedYear}-01-01 00:00:00`;
+    }
+
+    const [salesRows] = execute(
+      `SELECT
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', 'start of day') THEN total ELSE 0 END), 0) AS daily,
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS weekly,
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS monthly,
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-90 days') THEN total ELSE 0 END), 0) AS quarterly,
+        ${period === 'yearly'
+          ? `COALESCE(SUM(CASE WHEN timestamp >= ? AND timestamp < ? THEN total ELSE 0 END), 0)`
+          : `COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-365 days') THEN total ELSE 0 END), 0)`
+        } AS yearly
+      FROM transactions
+      WHERE archived_at IS NULL`,
+      period === 'yearly' ? [yearlyRangeStart, yearlyRangeEnd] : []
+    );
+
+    const rangeStart = period === 'yearly' ? yearlyRangeStart : null;
+    const rangeEnd = period === 'yearly' ? yearlyRangeEnd : null;
+    const itemsWhereClause = period === 'yearly'
+      ? 'WHERE t.archived_at IS NULL AND t.timestamp >= ? AND t.timestamp < ?'
+      : 'WHERE t.archived_at IS NULL AND t.timestamp >= datetime(\'now\', ?)';
+    const itemsWhereParams = period === 'yearly'
+      ? [rangeStart, rangeEnd]
+      : [`-${periodDays} days`];
+
+    const [revenueRows] = execute(
+      `SELECT
+        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue,
+        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_cost, 0)), 0) AS cost,
+        COALESCE(SUM(ti.quantity), 0) AS itemsSold
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      ${itemsWhereClause}`,
+      itemsWhereParams
+    );
+
+    const [topRows] = execute(
+      `SELECT
+        ti.product_id AS id,
+        COALESCE(p.name, 'Unknown Product') AS name,
+        COALESCE(SUM(ti.quantity), 0) AS quantity,
+        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      LEFT JOIN products p ON p.id = ti.product_id
+      ${itemsWhereClause}
+      GROUP BY ti.product_id
+      ORDER BY quantity DESC
+      LIMIT 10`,
+      itemsWhereParams
+    );
+
+    const [categoryRows] = execute(
+      `SELECT
+        COALESCE(p.category_name, 'Uncategorized') AS category,
+        COALESCE(SUM(ti.quantity), 0) AS sales,
+        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      LEFT JOIN products p ON p.id = ti.product_id
+      ${itemsWhereClause}
+      GROUP BY COALESCE(p.category_name, 'Uncategorized')
+      ORDER BY revenue DESC`,
+      itemsWhereParams
+    );
+
+    let salesTrend = [];
+    if (period === 'yearly') {
+      // Monthly roll-up: 12 rows instead of 365 for the whole year.
+      const [monthlyTrendRows] = execute(
+        `SELECT
+          strftime('%Y-%m', timestamp) AS month_key,
+          COALESCE(SUM(total), 0) AS total
+        FROM transactions
+        WHERE archived_at IS NULL
+          AND timestamp >= ?
+          AND timestamp < ?
+        GROUP BY strftime('%Y-%m', timestamp)
+        ORDER BY month_key ASC`,
+        [yearlyRangeStart, yearlyRangeEnd]
+      );
+      const monthlyMap = new Map((monthlyTrendRows || []).map((row) => [row.month_key, Number(row.total || 0)]));
+      const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      for (let m = 0; m < 12; m++) {
+        const key = `${selectedYear}-${String(m + 1).padStart(2, '0')}`;
+        salesTrend.push({
+          date: key,
+          label: `${monthLabels[m]} ${selectedYear}`,
+          sales: monthlyMap.get(key) || 0,
+        });
+      }
+    } else {
+      const [trendRows] = execute(
+        `SELECT
+          date(timestamp) AS sale_date,
+          COALESCE(SUM(total), 0) AS total
+        FROM transactions
+        WHERE archived_at IS NULL
+          AND timestamp >= datetime('now', ?)
+        GROUP BY date(timestamp)
+        ORDER BY sale_date ASC`,
+        [`-${periodDays - 1} days`]
+      );
+
+      const trendMap = new Map((trendRows || []).map((row) => [row.sale_date, Number(row.total || 0)]));
+      for (let i = periodDays - 1; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        salesTrend.push({
+          date: key,
+          label: new Date(key).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          sales: trendMap.get(key) || 0,
+        });
+      }
+    }
+
+    let growthPayload;
+    let hasPreviousData;
+    if (period === 'yearly') {
+      const [yearlyGrowthRows] = execute(
+        `SELECT
+          COALESCE(SUM(CASE WHEN timestamp >= ? AND timestamp < ? THEN total ELSE 0 END), 0) AS currentYearly,
+          COALESCE(SUM(CASE WHEN timestamp >= ? AND timestamp < ? THEN total ELSE 0 END), 0) AS previousYearly
+        FROM transactions
+        WHERE archived_at IS NULL`,
+        [yearlyRangeStart, yearlyRangeEnd, yearlyPreviousStart, yearlyPreviousEnd]
+      );
+      const yg = yearlyGrowthRows?.[0] || {};
+      const currentYearly = Number(yg.currentYearly || 0);
+      const previousYearly = Number(yg.previousYearly || 0);
+      const yearlyGrowth = previousYearly > 0
+        ? ((currentYearly - previousYearly) / previousYearly) * 100
+        : (currentYearly > 0 ? 100 : 0);
+      growthPayload = {
+        weekly: null,
+        monthly: null,
+        quarterly: null,
+        yearly: Number(yearlyGrowth),
+      };
+      hasPreviousData = {
+        weekly: false,
+        monthly: false,
+        quarterly: false,
+        yearly: previousYearly > 0,
+      };
+    } else {
+      const [growthRows] = execute(
+        `SELECT
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS currentWeekly,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-14 days') AND timestamp < datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS previousWeekly,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS currentMonthly,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-60 days') AND timestamp < datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS previousMonthly,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-90 days') THEN total ELSE 0 END), 0) AS currentQuarterly,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-180 days') AND timestamp < datetime('now', '-90 days') THEN total ELSE 0 END), 0) AS previousQuarterly,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-365 days') THEN total ELSE 0 END), 0) AS currentYearly,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-730 days') AND timestamp < datetime('now', '-365 days') THEN total ELSE 0 END), 0) AS previousYearly
+        FROM transactions
+        WHERE archived_at IS NULL`
+      );
+
+      const growthSource = growthRows?.[0] || {};
+      const growthFor = (current, previous) => previous > 0 ? ((current - previous) / previous) * 100 : (current > 0 ? 100 : 0);
+      growthPayload = {
+        weekly: Number(growthFor(Number(growthSource.currentWeekly || 0), Number(growthSource.previousWeekly || 0))),
+        monthly: Number(growthFor(Number(growthSource.currentMonthly || 0), Number(growthSource.previousMonthly || 0))),
+        quarterly: Number(growthFor(Number(growthSource.currentQuarterly || 0), Number(growthSource.previousQuarterly || 0))),
+        yearly: Number(growthFor(Number(growthSource.currentYearly || 0), Number(growthSource.previousYearly || 0))),
+      };
+      hasPreviousData = {
+        weekly: Number(growthSource.previousWeekly || 0) > 0,
+        monthly: Number(growthSource.previousMonthly || 0) > 0,
+        quarterly: Number(growthSource.previousQuarterly || 0) > 0,
+        yearly: Number(growthSource.previousYearly || 0) > 0,
+      };
+    }
+
+    // Dead stock: use a pre-aggregated subquery so we only group transaction_items once.
+    const [deadStockRows] = execute(
+      `SELECT
+        p.id,
+        p.name,
+        p.category_name,
+        p.quantity,
+        p.cost,
+        p.price,
+        agg.lastSold,
+        COALESCE(agg.totalSold, 0) AS totalSold
+      FROM products p
+      LEFT JOIN (
+        SELECT
+          ti.product_id,
+          MAX(t.timestamp) AS lastSold,
+          SUM(ti.quantity) AS totalSold
+        FROM transaction_items ti
+        JOIN transactions t ON t.id = ti.transaction_id
+        WHERE t.archived_at IS NULL
+        GROUP BY ti.product_id
+      ) agg ON agg.product_id = p.id
+      WHERE p.deleted_at IS NULL
+        AND p.quantity > 0`
+    );
+
+    const cutoffMs = Date.now() - deadStockDays * 24 * 60 * 60 * 1000;
+    const deadStock = (deadStockRows || [])
+      .map((row) => {
+        const quantity = Number(row.quantity || 0);
+        const cost = Number(row.cost || 0);
+        const price = Number(row.price || 0);
+        const lastSoldDate = row.lastSold ? new Date(row.lastSold) : null;
+        const daysSinceLastSale = lastSoldDate ? Math.floor((Date.now() - lastSoldDate.getTime()) / (1000 * 60 * 60 * 24)) : null;
+        return {
+          id: row.id,
+          name: row.name,
+          category_name: row.category_name,
+          quantity,
+          cost,
+          price,
+          totalSold: Number(row.totalSold || 0),
+          lastSold: row.lastSold,
+          daysSinceLastSale,
+          tiedUpCost: cost * quantity,
+          tiedUpRetail: price * quantity,
+        };
+      })
+      .filter((row) => !row.lastSold || new Date(row.lastSold).getTime() < cutoffMs)
+      .sort((a, b) => Number(b.tiedUpRetail || 0) - Number(a.tiedUpRetail || 0));
+
+    const [abcRows] = execute(
+      `SELECT
+        ti.product_id AS id,
+        COALESCE(p.name, 'Unknown Product') AS name,
+        COALESCE(SUM(ti.quantity), 0) AS quantity,
+        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      LEFT JOIN products p ON p.id = ti.product_id
+      ${itemsWhereClause}
+      GROUP BY ti.product_id
+      ORDER BY revenue DESC`,
+      itemsWhereParams
+    );
+
+    // Available years are needed so the client can populate the year selector.
+    let availableYears = [];
+    if (period === 'yearly') {
+      const [yearBoundsRows] = execute(
+        `SELECT
+          CAST(strftime('%Y', MIN(timestamp)) AS INTEGER) AS minYear,
+          CAST(strftime('%Y', MAX(timestamp)) AS INTEGER) AS maxYear
+        FROM transactions
+        WHERE archived_at IS NULL`
+      );
+      const bounds = yearBoundsRows?.[0] || {};
+      const minY = Number.isFinite(Number(bounds.minYear)) ? Number(bounds.minYear) : null;
+      const maxY = Number.isFinite(Number(bounds.maxYear)) ? Number(bounds.maxYear) : null;
+      const currentYear = new Date().getFullYear();
+      const start = minY || currentYear;
+      const end = Math.max(maxY || currentYear, currentYear);
+      for (let y = end; y >= start; y--) {
+        availableYears.push(y);
+      }
+    }
+
+    const totalAbcRevenue = (abcRows || []).reduce((sum, row) => sum + Number(row.revenue || 0), 0);
+    let cumulative = 0;
+    const abcAnalysis = (abcRows || []).map((row, index) => {
+      const revenue = Number(row.revenue || 0);
+      cumulative += revenue;
+      const sharePct = totalAbcRevenue > 0 ? (revenue / totalAbcRevenue) * 100 : 0;
+      const cumulativePct = totalAbcRevenue > 0 ? (cumulative / totalAbcRevenue) * 100 : 0;
+      let bucket = 'C';
+      if (cumulativePct <= 80) bucket = 'A';
+      else if (cumulativePct <= 95) bucket = 'B';
+      return {
+        id: row.id,
+        name: row.name,
+        quantity: Number(row.quantity || 0),
+        revenue,
+        rank: index + 1,
+        sharePct,
+        cumulativePct,
+        bucket,
+      };
+    });
+
+    const revenueSource = revenueRows?.[0] || {};
+    const revenue = Number(revenueSource.revenue || 0);
+    const cost = Number(revenueSource.cost || 0);
+
+    res.json({
+      salesData: {
+        daily: Number(salesRows?.[0]?.daily || 0),
+        weekly: Number(salesRows?.[0]?.weekly || 0),
+        monthly: Number(salesRows?.[0]?.monthly || 0),
+        quarterly: Number(salesRows?.[0]?.quarterly || 0),
+        yearly: Number(salesRows?.[0]?.yearly || 0),
+      },
+      revenueData: {
+        revenue,
+        cost,
+        profit: revenue - cost,
+        margin: revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0,
+        itemsSold: Number(revenueSource.itemsSold || 0),
+      },
+      topProducts: (topRows || []).map((row) => ({
+        id: row.id,
+        name: row.name,
+        quantity: Number(row.quantity || 0),
+        revenue: Number(row.revenue || 0),
+      })),
+      salesTrend,
+      categoryDistribution: (categoryRows || []).map((row) => ({
+        category: row.category,
+        sales: Number(row.sales || 0),
+        revenue: Number(row.revenue || 0),
+      })),
+      salesGrowth: growthPayload,
+      hasPreviousData,
+      deadStock,
+      abcAnalysis,
+      selectedYear,
+      comparisonYear,
+      availableYears,
+    });
+  } catch (error) {
+    console.error('Error fetching statistical reports summary:', error);
+    res.status(500).json({ error: 'Failed to fetch statistical reports summary' });
+  }
+});
+
+// Legacy sales analytics endpoint (kept for compatibility)
 app.get('/api/analytics/sales', async (req, res) => {
   try {
     const { period = 'monthly' } = req.query;
@@ -2935,7 +3885,7 @@ app.get('/api/analytics/sales', async (req, res) => {
     }
 
     const [transactions] = execute(
-      'SELECT * FROM transactions WHERE timestamp >= ? ORDER BY timestamp DESC',
+      'SELECT * FROM transactions WHERE archived_at IS NULL AND timestamp >= ? ORDER BY timestamp DESC',
       [startDate.toISOString()]
     );
 

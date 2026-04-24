@@ -33,6 +33,16 @@ const fetchJson = async (url, options = {}) => {
   return data;
 };
 
+const toQueryString = (params = {}) => {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    searchParams.set(key, String(value));
+  });
+  const queryString = searchParams.toString();
+  return queryString ? `?${queryString}` : '';
+};
+
 const resolveAssetUrl = async (assetPath) => {
   if (!assetPath || typeof assetPath !== 'string') {
     return assetPath;
@@ -254,7 +264,15 @@ export const transactionService = {
     if (hasNativeBridge) {
       return nativeCall('transactions', 'list', params);
     }
-    return fetchJson(`${API_URL}/transactions`);
+    return fetchJson(`${API_URL}/transactions${toQueryString(params)}`);
+  },
+
+  getPage: async (params = {}) => {
+    const requestParams = { ...params, paginated: 1 };
+    if (hasNativeBridge) {
+      return nativeCall('transactions', 'list', requestParams);
+    }
+    return fetchJson(`${API_URL}/transactions${toQueryString(requestParams)}`);
   },
 
   getById: async (id) => {
@@ -286,7 +304,14 @@ export const transactionService = {
     if (hasNativeBridge) {
       return nativeCall('transactions', 'list', { startDate, endDate });
     }
-    return fetchJson(`${API_URL}/transactions?startDate=${startDate}&endDate=${endDate}`);
+    return fetchJson(`${API_URL}/transactions${toQueryString({ startDate, endDate })}`);
+  },
+
+  getSummary: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('transactions', 'summary', params);
+    }
+    return fetchJson(`${API_URL}/transactions/summary${toQueryString(params)}`);
   },
 
   delete: async (id, userRole) => {
@@ -301,11 +326,12 @@ export const transactionService = {
     });
   },
 
-  getArchived: async () => {
+  getArchived: async (params = {}) => {
+    const requestParams = params?.paginated ? params : { ...params };
     if (hasNativeBridge) {
-      return nativeCall('transactions', 'list', { archivedOnly: true });
+      return nativeCall('transactions', 'list', { ...requestParams, archivedOnly: true });
     }
-    return fetchJson(`${API_URL}/transactions/archived`);
+    return fetchJson(`${API_URL}/transactions/archived${toQueryString(requestParams)}`);
   },
 
   restore: async (id, userRole) => {
@@ -330,6 +356,29 @@ export const transactionService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userRole, userId: user?.id, userName: user?.name, userEmail: user?.email }),
     });
+  },
+};
+
+export const analyticsService = {
+  getDashboardSummary: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('analytics', 'dashboardSummary', params);
+    }
+    return fetchJson(`${API_URL}/dashboard/summary${toQueryString(params)}`);
+  },
+
+  getReportsSummary: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('analytics', 'reportsSummary', params);
+    }
+    return fetchJson(`${API_URL}/reports/summary${toQueryString(params)}`);
+  },
+
+  getStatisticalSummary: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('analytics', 'statisticalSummary', params);
+    }
+    return fetchJson(`${API_URL}/statistical-reports/summary${toQueryString(params)}`);
   },
 };
 

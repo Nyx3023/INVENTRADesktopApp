@@ -1,14 +1,18 @@
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import LazyPageLoader from '../common/LazyPageLoader';
 
 const ProtectedRoute = () => {
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-lg">Loading...</div>
-      </div>
+      <LazyPageLoader
+        title="Verifying session"
+        subtitle="Checking your credentials..."
+        rows={3}
+        centered
+      />
     );
   }
 

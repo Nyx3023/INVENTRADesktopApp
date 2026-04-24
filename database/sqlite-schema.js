@@ -290,6 +290,8 @@ export async function initializeDatabase() {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_purchase_order_items_product ON purchase_order_items(product_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_archived ON transactions(archived_at)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_archived_timestamp ON transactions(archived_at, timestamp DESC)`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_reference_number_nonnull ON transactions(reference_number) WHERE reference_number IS NOT NULL`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_transaction_items_transaction ON transaction_items(transaction_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_transaction_items_product ON transaction_items(product_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_audits_date ON audits(audit_date)`);

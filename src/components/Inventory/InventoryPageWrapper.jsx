@@ -8,8 +8,8 @@ import {
   TruckIcon,
   ScaleIcon
 } from '@heroicons/react/24/outline';
+import LazyPageLoader from '../common/LazyPageLoader';
 
-// Lazy load the tab components
 const ProductsTab = lazy(() => import('./InventoryScreen'));
 const AuditsTab = lazy(() => import('../Audits/AuditsScreen'));
 const PurchaseOrdersTab = lazy(() => import('./PurchaseOrdersScreen'));
@@ -17,12 +17,12 @@ const SuppliersTab = lazy(() => import('./SuppliersScreen'));
 const StockAdjustmentsTab = lazy(() => import('./StockAdjustmentsScreen'));
 
 const LoadingSpinner = () => (
-  <div className="h-full flex items-center justify-center min-h-[400px]">
-    <div className="text-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500/30 border-t-blue-500 mx-auto mb-4"></div>
-      <p className="text-gray-600 dark:text-gray-400">Loading...</p>
-    </div>
-  </div>
+  <LazyPageLoader
+    title="Loading tab"
+    subtitle="Fetching section content..."
+    rows={4}
+    centered
+  />
 );
 
 const InventoryPageWrapper = () => {

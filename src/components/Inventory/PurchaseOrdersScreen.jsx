@@ -26,6 +26,7 @@ import {
 import { downloadPurchaseOrderPDF } from '../../utils/pdfGenerator';
 import InvoicePreviewModal from './InvoicePreviewModal';
 import ModalPortal from '../common/ModalPortal';
+import LazyPageLoader from '../common/LazyPageLoader';
 
 const PurchaseOrdersScreen = () => {
   const navigate = useNavigate();
@@ -355,12 +356,12 @@ const PurchaseOrdersScreen = () => {
 
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className={`${colors.text.secondary}`}>Loading purchase orders...</p>
-        </div>
-      </div>
+      <LazyPageLoader
+        title="Loading purchase orders"
+        subtitle="Fetching purchase orders and supplier details..."
+        rows={5}
+        centered
+      />
     );
   }
 

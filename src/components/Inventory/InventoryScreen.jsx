@@ -41,6 +41,7 @@ import { useGlobalBarcode } from '../../context/BarcodeContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useSettings } from '../../context/SettingsContext';
 import ModalPortal from '../common/ModalPortal';
+import LazyPageLoader from '../common/LazyPageLoader';
 
 const InventoryScreen = () => {
   console.log('InventoryScreen rendering');
@@ -1148,13 +1149,12 @@ const InventoryScreen = () => {
 
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-500/30 border-t-blue-500 mx-auto mb-6"></div>
-          <p className={`text-lg font-medium ${colors.text.primary}`}>Loading inventory...</p>
-          <p className={`text-sm ${colors.text.secondary} mt-2`}>Please wait while we fetch your products</p>
-        </div>
-      </div>
+      <LazyPageLoader
+        title="Loading inventory"
+        subtitle="Fetching your products, categories and stock levels..."
+        rows={6}
+        centered
+      />
     );
   }
 

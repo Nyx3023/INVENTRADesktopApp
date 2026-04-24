@@ -26,6 +26,7 @@ import {
   ClipboardDocumentCheckIcon,
   ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline';
+import LazyPageLoader from '../common/LazyPageLoader';
 
 // Action icon mapping
 const ACTION_ICONS = {
@@ -241,12 +242,12 @@ const LogsScreen = () => {
 
   if (isLoading && logs.length === 0) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-500/30 border-t-blue-500 mx-auto mb-6"></div>
-          <p className={`text-lg font-medium ${colors.text.primary}`}>Loading activity logs...</p>
-        </div>
-      </div>
+      <LazyPageLoader
+        title="Loading activity logs"
+        subtitle="Fetching system activity history..."
+        rows={5}
+        centered
+      />
     );
   }
 

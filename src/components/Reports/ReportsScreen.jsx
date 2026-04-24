@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { transactionService, productService } from '../../services/api';
-import { useAuth, usePermissions } from '../../context/AuthContext';
+import { analyticsService } from '../../services/api';
+import { usePermissions } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { useSettings } from '../../context/SettingsContext';
 import { formatCurrency } from '../../utils/formatters';
+import LazyPageLoader from '../common/LazyPageLoader';
 import {
   DocumentTextIcon,
   CalendarIcon,
@@ -16,9 +16,11 @@ import {
   BanknotesIcon
 } from '@heroicons/react/24/outline';
 
+const TRANSACTIONS_PAGE_SIZE = 50;
+const MOVEMENTS_PAGE_SIZE = 100;
+
 const ReportsScreen = () => {
   const { colors } = useTheme();
-  const { settings } = useSettings();
   const { hasPermission } = usePermissions();
   const [activeReport, setActiveReport] = useState('sales');
   const [dateRange, setDateRange] = useState({
@@ -38,150 +40,81 @@ const ReportsScreen = () => {
     minAmount: '',
     maxAmount: ''
   });
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  const [transactionsPage, setTransactionsPage] = useState(1);
+  const [stockMovementPage, setStockMovementPage] = useState(1);
+  const [reportMeta, setReportMeta] = useState({
+    transactions: { total: 0, page: 1, limit: TRANSACTIONS_PAGE_SIZE, hasNextPage: false },
+    stockMovement: { total: 0, page: 1, limit: MOVEMENTS_PAGE_SIZE, hasNextPage: false },
+  });
 
   useEffect(() => {
     loadReportData();
-  }, [activeReport, dateRange]);
+  }, [
+    activeReport,
+    dateRange.startDate,
+    dateRange.endDate,
+    transactionsPage,
+    stockMovementPage,
+    filters.category,
+    filters.paymentMethod,
+    filters.minAmount,
+    filters.maxAmount
+  ]);
+
+  useEffect(() => {
+    setTransactionsPage(1);
+    setStockMovementPage(1);
+  }, [dateRange.startDate, dateRange.endDate]);
+
+  useEffect(() => {
+    setTransactionsPage(1);
+    setStockMovementPage(1);
+  }, [filters.category, filters.paymentMethod, filters.minAmount, filters.maxAmount]);
 
   const loadReportData = async () => {
     setIsLoading(true);
     try {
-      const [transactions, products] = await Promise.all([
-        transactionService.getAll(),
-        productService.getAll()
-      ]);
-
-      const filteredTransactions = transactions.filter(t => {
-        const transactionDate = new Date(t.timestamp);
-        const startDate = new Date(dateRange.startDate);
-        const endDate = new Date(dateRange.endDate);
-        endDate.setHours(23, 59, 59, 999);
-
-        return transactionDate >= startDate && transactionDate <= endDate;
+      const data = await analyticsService.getReportsSummary({
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        transactionPage: transactionsPage,
+        transactionLimit: TRANSACTIONS_PAGE_SIZE,
+        movementPage: stockMovementPage,
+        movementLimit: MOVEMENTS_PAGE_SIZE,
+        category: filters.category || undefined,
+        paymentMethod: filters.paymentMethod || undefined,
+        minAmount: filters.minAmount || undefined,
+        maxAmount: filters.maxAmount || undefined,
       });
 
       setReportData({
-        sales: generateSalesReport(filteredTransactions),
-        transactions: filteredTransactions,
-        stockMovement: generateStockMovementReport(filteredTransactions, products),
-        restocking: generateRestockingReport(products)
+        sales: data.sales || { dailySales: [], productSales: [], categorySales: [], summary: {} },
+        transactions: data.transactions?.items || [],
+        stockMovement: data.stockMovement?.items || [],
+        restocking: data.restocking || [],
       });
+      setReportMeta({
+        transactions: {
+          total: data.transactions?.total || 0,
+          page: data.transactions?.page || transactionsPage,
+          limit: data.transactions?.limit || TRANSACTIONS_PAGE_SIZE,
+          hasNextPage: Boolean(data.transactions?.hasNextPage),
+        },
+        stockMovement: {
+          total: data.stockMovement?.total || 0,
+          page: data.stockMovement?.page || stockMovementPage,
+          limit: data.stockMovement?.limit || MOVEMENTS_PAGE_SIZE,
+          hasNextPage: Boolean(data.stockMovement?.hasNextPage),
+        },
+      });
+      setCategoryOptions(Array.isArray(data.availableCategories) ? data.availableCategories : []);
     } catch (error) {
       console.error('Error loading report data:', error);
       toast.error('Failed to load report data');
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const generateSalesReport = (transactions) => {
-    const salesByDate = {};
-    const salesByProduct = {};
-    const salesByCategory = {};
-
-    transactions.forEach(transaction => {
-      const date = new Date(transaction.timestamp).toLocaleDateString();
-
-      // Sales by date
-      if (!salesByDate[date]) {
-        salesByDate[date] = {
-          date,
-          transactions: 0,
-          revenue: 0,
-          itemsSold: 0
-        };
-      }
-      salesByDate[date].transactions++;
-      salesByDate[date].revenue += transaction.total;
-      salesByDate[date].itemsSold += transaction.items?.reduce((sum, item) => sum + item.quantity, 0) || 0;
-
-      // Sales by product and category
-      transaction.items?.forEach(item => {
-        if (!salesByProduct[item.productId]) {
-          salesByProduct[item.productId] = {
-            productId: item.productId,
-            name: item.name,
-            category: item.category || 'Uncategorized',
-            unitsSold: 0,
-            revenue: 0
-          };
-        }
-        salesByProduct[item.productId].unitsSold += item.quantity;
-        salesByProduct[item.productId].revenue += item.subtotal;
-
-        const category = item.category || 'Uncategorized';
-        if (!salesByCategory[category]) {
-          salesByCategory[category] = {
-            category,
-            unitsSold: 0,
-            revenue: 0
-          };
-        }
-        salesByCategory[category].unitsSold += item.quantity;
-        salesByCategory[category].revenue += item.subtotal;
-      });
-    });
-
-    return {
-      dailySales: Object.values(salesByDate).sort((a, b) => new Date(a.date) - new Date(b.date)),
-      productSales: Object.values(salesByProduct).sort((a, b) => b.revenue - a.revenue),
-      categorySales: Object.values(salesByCategory).sort((a, b) => b.revenue - a.revenue),
-      summary: {
-        totalTransactions: transactions.length,
-        totalRevenue: transactions.reduce((sum, t) => sum + t.total, 0),
-        totalItemsSold: transactions.reduce((sum, t) =>
-          sum + (t.items?.reduce((itemSum, item) => itemSum + item.quantity, 0) || 0), 0
-        ),
-        avgTransactionValue: transactions.length > 0 ?
-          transactions.reduce((sum, t) => sum + t.total, 0) / transactions.length : 0
-      }
-    };
-  };
-
-  const generateStockMovementReport = (transactions, products) => {
-    const movements = [];
-    const productMap = {};
-
-    products.forEach(product => {
-      productMap[product.id] = product;
-    });
-
-    transactions.forEach(transaction => {
-      transaction.items?.forEach(item => {
-        movements.push({
-          id: `${transaction.id}-${item.productId}`,
-          timestamp: transaction.timestamp,
-          productId: item.productId,
-          productName: item.name,
-          category: item.category || 'Uncategorized',
-          type: 'SALE',
-          quantity: -item.quantity, // Negative for sales
-          unitPrice: item.price,
-          totalValue: item.subtotal,
-          reference: transaction.id,
-          description: `Sale - Transaction ${transaction.id}`
-        });
-      });
-    });
-
-    // Sort by timestamp descending
-    movements.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-    return movements;
-  };
-
-  const generateRestockingReport = (products) => {
-    // This would typically come from inventory management records
-    // For now, we'll generate based on current stock levels and thresholds
-    return products.map(product => ({
-      productId: product.id,
-      productName: product.name,
-      category: product.category || 'Uncategorized',
-      currentStock: product.quantity,
-      status: product.quantity <= (settings.lowStockThreshold ?? 10) ? 'LOW_STOCK' : 'ADEQUATE',
-      lastRestockDate: product.lastRestockDate || 'N/A',
-      supplier: product.supplier || 'N/A'
-    })).sort((a, b) => a.currentStock - b.currentStock);
   };
 
   const exportReport = (format = 'csv') => {
@@ -248,18 +181,6 @@ const ReportsScreen = () => {
     document.body.removeChild(link);
 
     toast.success('Report exported successfully');
-  };
-
-  const applyFilters = (data) => {
-    if (!Array.isArray(data)) return data;
-
-    return data.filter(item => {
-      if (filters.category && item.category !== filters.category) return false;
-      if (filters.paymentMethod && item.paymentMethod !== filters.paymentMethod) return false;
-      if (filters.minAmount && (item.total || item.revenue || item.totalValue || 0) < parseFloat(filters.minAmount)) return false;
-      if (filters.maxAmount && (item.total || item.revenue || item.totalValue || 0) > parseFloat(filters.maxAmount)) return false;
-      return true;
-    });
   };
 
   const reportTypes = [
@@ -356,14 +277,14 @@ const ReportsScreen = () => {
   };
 
   const renderTransactionsReport = () => {
-    const filteredData = applyFilters(reportData.transactions);
+    const totalPages = Math.max(1, Math.ceil((reportMeta.transactions.total || 0) / (reportMeta.transactions.limit || TRANSACTIONS_PAGE_SIZE)));
 
     return (
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
           <h3 className="text-lg font-medium">Transaction History</h3>
           <p className="text-sm text-gray-500 mt-1">
-            Showing {filteredData.length} of {reportData.transactions.length} transactions
+            Showing page {reportMeta.transactions.page} of {totalPages} ({reportMeta.transactions.total} total transactions)
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -378,8 +299,8 @@ const ReportsScreen = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredData.map((transaction, index) => (
-                <tr key={index}>
+              {reportData.transactions.map((transaction) => (
+                <tr key={transaction.id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{transaction.id}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {new Date(transaction.timestamp).toLocaleString()}
@@ -401,19 +322,30 @@ const ReportsScreen = () => {
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="px-6 py-4 border-t border-gray-200">
+            {renderPaginationControls({
+              page: reportMeta.transactions.page,
+              totalPages,
+              onPrev: () => setTransactionsPage((prev) => Math.max(1, prev - 1)),
+              onNext: () => setTransactionsPage((prev) => (reportMeta.transactions.hasNextPage ? prev + 1 : prev)),
+              hasNext: reportMeta.transactions.hasNextPage,
+            })}
+          </div>
+        )}
       </div>
     );
   };
 
   const renderStockMovementReport = () => {
-    const filteredData = applyFilters(reportData.stockMovement);
+    const totalPages = Math.max(1, Math.ceil((reportMeta.stockMovement.total || 0) / (reportMeta.stockMovement.limit || MOVEMENTS_PAGE_SIZE)));
 
     return (
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
           <h3 className="text-lg font-medium">Stock Movement History</h3>
           <p className="text-sm text-gray-500 mt-1">
-            Showing {filteredData.length} of {reportData.stockMovement.length} movements
+            Showing page {reportMeta.stockMovement.page} of {totalPages} ({reportMeta.stockMovement.total} total movements)
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -430,7 +362,7 @@ const ReportsScreen = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredData.map((movement, index) => (
+              {reportData.stockMovement.map((movement, index) => (
                 <tr key={index}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {new Date(movement.timestamp).toLocaleString()}
@@ -463,12 +395,48 @@ const ReportsScreen = () => {
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="px-6 py-4 border-t border-gray-200">
+            {renderPaginationControls({
+              page: reportMeta.stockMovement.page,
+              totalPages,
+              onPrev: () => setStockMovementPage((prev) => Math.max(1, prev - 1)),
+              onNext: () => setStockMovementPage((prev) => (reportMeta.stockMovement.hasNextPage ? prev + 1 : prev)),
+              hasNext: reportMeta.stockMovement.hasNextPage,
+            })}
+          </div>
+        )}
       </div>
     );
   };
 
+  const renderPaginationControls = ({ page, totalPages, onPrev, onNext, hasNext }) => (
+    <div className="flex items-center justify-between">
+      <p className="text-sm text-gray-500">Page {page} of {totalPages}</p>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onPrev}
+          disabled={page <= 1}
+          className="px-3 py-1.5 rounded border border-gray-300 text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+        >
+          Previous
+        </button>
+        <button
+          onClick={onNext}
+          disabled={!hasNext}
+          className="px-3 py-1.5 rounded border border-gray-300 text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+
   const renderRestockingReport = () => {
-    const filteredData = applyFilters(reportData.restocking);
+    const filteredData = reportData.restocking.filter(item => {
+      if (filters.category && item.category !== filters.category) return false;
+      return true;
+    });
     const lowStockItems = filteredData.filter(item => item.status === 'LOW_STOCK');
 
     return (
@@ -564,7 +532,7 @@ const ReportsScreen = () => {
 
       {/* Controls */}
       <div className={`${colors.card.primary} rounded-lg shadow border ${colors.border.primary} p-4 mb-6`}>
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
           {/* Date Range */}
           <div>
             <label className={`block text-sm font-medium ${colors.text.primary} mb-1`}>Start Date</label>
@@ -594,7 +562,9 @@ const ReportsScreen = () => {
               onChange={(e) => setFilters(prev => ({ ...prev, category: e.target.value }))}
             >
               <option value="">All Categories</option>
-              {/* Add category options dynamically */}
+              {categoryOptions.map((category) => (
+                <option key={category} value={category}>{category}</option>
+              ))}
             </select>
           </div>
 
@@ -609,6 +579,32 @@ const ReportsScreen = () => {
               <option value="cash">Cash</option>
               <option value="card">Card</option>
             </select>
+          </div>
+
+          <div>
+            <label className={`block text-sm font-medium ${colors.text.primary} mb-1`}>Min Amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              className={`w-full border rounded-lg px-3 py-2 ${colors.input.primary}`}
+              value={filters.minAmount}
+              onChange={(e) => setFilters(prev => ({ ...prev, minAmount: e.target.value }))}
+              placeholder="0.00"
+            />
+          </div>
+
+          <div>
+            <label className={`block text-sm font-medium ${colors.text.primary} mb-1`}>Max Amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              className={`w-full border rounded-lg px-3 py-2 ${colors.input.primary}`}
+              value={filters.maxAmount}
+              onChange={(e) => setFilters(prev => ({ ...prev, maxAmount: e.target.value }))}
+              placeholder="Any"
+            />
           </div>
         </div>
       </div>
@@ -633,12 +629,12 @@ const ReportsScreen = () => {
       {/* Report Content */}
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-              <p className={`${colors.text.secondary}`}>Loading report data...</p>
-            </div>
-          </div>
+          <LazyPageLoader
+            title="Loading report data"
+            subtitle="Aggregating records for the selected range..."
+            rows={5}
+            centered={false}
+          />
         ) : (
           renderReportContent()
         )}

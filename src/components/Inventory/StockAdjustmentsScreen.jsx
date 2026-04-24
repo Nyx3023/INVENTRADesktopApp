@@ -21,6 +21,7 @@ import {
   CubeIcon,
 } from '@heroicons/react/24/outline';
 import ModalPortal from '../common/ModalPortal';
+import LazyPageLoader from '../common/LazyPageLoader';
 import {
   ScaleIcon as ScaleIconSolid,
 } from '@heroicons/react/24/solid';
@@ -471,11 +472,13 @@ const StockAdjustmentsScreen = () => {
       {/* Adjustments Table */}
       <div className={`${colors.card.primary} rounded-xl shadow-sm border ${colors.border.primary} flex-1 overflow-hidden flex flex-col`}>
         {isLoading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500/30 border-t-blue-500 mx-auto mb-4"></div>
-              <p className={colors.text.secondary}>Loading adjustments...</p>
-            </div>
+          <div className="p-4">
+            <LazyPageLoader
+              title="Loading adjustments"
+              subtitle="Fetching stock adjustment history..."
+              rows={4}
+              centered={false}
+            />
           </div>
         ) : paginatedAdjustments.length === 0 ? (
           <div className="flex items-center justify-center h-64">

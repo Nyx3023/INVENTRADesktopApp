@@ -10,6 +10,7 @@ import LoginPage from './components/Auth/LoginPage';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
 import PermissionRequired from './components/Auth/PermissionRequired';
 import MainLayout from './components/Layout/MainLayout';
+import LazyPageLoader from './components/common/LazyPageLoader';
 const POSScreen = lazy(() => import('./components/POS/POSScreen'));
 const InventoryPageWrapper = lazy(() => import('./components/Inventory/InventoryPageWrapper'));
 const AdminOnly = lazy(() => import('./components/Settings/AdminOnly'));
@@ -25,8 +26,13 @@ function AppRoutes() {
 
   return (
     <Suspense fallback={
-      <div className="h-screen w-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500/30 border-t-blue-500"></div>
+      <div className="h-screen w-screen">
+        <LazyPageLoader
+          title="Preparing INVENTRA"
+          subtitle="Loading page module..."
+          rows={3}
+          centered
+        />
       </div>
     }>
       <Routes>

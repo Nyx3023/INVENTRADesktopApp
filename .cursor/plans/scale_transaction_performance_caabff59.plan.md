@@ -4,25 +4,25 @@ overview: Make the app remain responsive with very large sales history by moving
 todos:
   - id: db-indexes
     content: Add idempotent composite and lookup indexes for transaction-heavy queries in sqlite schema init.
-    status: pending
+    status: completed
   - id: backend-pagination
     content: Implement paginated/filterable transaction list and archived list endpoints with stable ordering and total counts.
-    status: pending
+    status: completed
   - id: backend-aggregates
     content: Add SQL aggregate endpoints for dashboard/reports/statistics to eliminate client full-history processing.
-    status: pending
+    status: completed
   - id: api-service-upgrade
     content: Update transaction service to pass query params on web/native and support paged + summary responses.
-    status: pending
+    status: completed
   - id: migrate-sales-screen
     content: Migrate Sales screen to server pagination/filtering and remove full-array processing.
-    status: pending
+    status: completed
   - id: migrate-dashboard-reports
     content: Migrate Dashboard, Reports, StatisticalReports, and Archives to aggregate/paged APIs.
-    status: pending
+    status: completed
   - id: validation-benchmark
     content: Run regression + performance checks on large dataset and tune limits/caps.
-    status: pending
+    status: completed
 isProject: false
 ---
 

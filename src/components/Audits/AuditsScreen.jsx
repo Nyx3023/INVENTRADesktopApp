@@ -17,6 +17,7 @@ import {
   ClipboardDocumentCheckIcon,
   MinusIcon,
 } from '@heroicons/react/24/outline';
+import LazyPageLoader from '../common/LazyPageLoader';
 
 const AuditsScreen = () => {
   const { colors } = useTheme();
@@ -189,12 +190,12 @@ const AuditsScreen = () => {
 
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-500/30 border-t-blue-500 mx-auto mb-6"></div>
-          <p className={`text-lg font-medium ${colors.text.primary}`}>Loading audit data...</p>
-        </div>
-      </div>
+      <LazyPageLoader
+        title="Loading audit data"
+        subtitle="Fetching audit history and counts..."
+        rows={5}
+        centered
+      />
     );
   }
 
