@@ -12,6 +12,7 @@ import {
   CalendarIcon,
   ArrowUpIcon,
   ArrowDownIcon,
+  MinusIcon,
   DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import { analyticsService } from '../../services/api';
@@ -76,17 +77,19 @@ const DashboardScreen = () => {
   const [alerts, setAlerts] = useState([]);
   const [salesTrendData, setSalesTrendData] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedPeriod, setSelectedPeriod] = useState('weekly');
+  const [selectedPeriod, setSelectedPeriod] = useState('weekly'); // for Sales Overview chart ONLY
+  const [selectedRange, setSelectedRange] = useState('weekly'); // for stat cards + top sellers
 
   useEffect(() => {
     loadDashboardData();
-  }, [selectedPeriod, settings.lowStockThreshold]);
+  }, [selectedRange, selectedPeriod, settings.lowStockThreshold]);
 
   const loadDashboardData = async () => {
     try {
       setIsLoading(true);
       const data = await analyticsService.getDashboardSummary({
-        period: selectedPeriod,
+        period: selectedRange,
+        trendPeriod: selectedPeriod, // separate param for Sales Overview chart
         lowStockThreshold: settings.lowStockThreshold ?? 10,
       });
 
@@ -155,12 +158,22 @@ const DashboardScreen = () => {
 
   const handleRestockItems = () => navigate('/inventory?filter=lowStock');
 
-  const getCurrentPeriodData = () => {
-    switch (selectedPeriod) {
-      case 'weekly': return { sales: salesMetrics.weeklySales, growth: salesMetrics.weeklyGrowth, period: '7 Days' };
-      case 'monthly': return { sales: salesMetrics.monthlySales, growth: salesMetrics.monthlyGrowth, period: '30 Days' };
-      default: return { sales: salesMetrics.weeklySales, growth: salesMetrics.weeklyGrowth, period: '7 Days' };
+  const getRangeLabel = () => {
+    switch (selectedRange) {
+      case 'daily': return 'Today';
+      case 'weekly': return '7 Days';
+      case 'monthly': return '30 Days';
+      case 'all': return 'All Time';
+      default: return '7 Days';
     }
+  };
+
+  const getCurrentPeriodData = () => {
+    return {
+      sales: salesMetrics.periodRevenue || 0,
+      growth: salesMetrics.periodGrowth || 0,
+      period: getRangeLabel(),
+    };
   };
 
   const formatPercent = (value) => {
@@ -255,6 +268,13 @@ const DashboardScreen = () => {
 
   const currentPeriodData = getCurrentPeriodData();
 
+  const getValueFontSize = (val) => {
+    const s = String(val);
+    if (s.length > 14) return 'text-xl';
+    if (s.length > 11) return 'text-2xl';
+    return 'text-3xl';
+  };
+
   const StatCard = ({ title, value, icon: Icon, color, trend, trendValue, description, onClick }) => (
     <div
       onClick={onClick}
@@ -262,20 +282,20 @@ const DashboardScreen = () => {
     >
       <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-transparent to-[var(--tw-gradient-stops)] opacity-10 rounded-bl-full transition-transform duration-500 group-hover:scale-110" style={{ '--tw-gradient-stops': color }}></div>
       <div className="flex justify-between items-start">
-        <div>
-          <p className={`text-sm font-medium ${colors.text.secondary} mb-1`}>{title}</p>
-          <p className={`text-3xl font-bold ${colors.text.primary} tracking-tight mb-2`}>{value}</p>
+        <div className="flex-1 min-w-0">
+          <p className={`text-sm font-medium ${colors.text.secondary} mb-1 truncate`}>{title}</p>
+          <p className={`${getValueFontSize(value)} font-bold ${colors.text.primary} tracking-tight mb-2 truncate`}>{value}</p>
           <div className="flex items-center space-x-2">
             {trend && (
               <span className={`flex items-center text-xs font-semibold px-2 py-0.5 rounded-full ${trend === 'up' ? 'text-emerald-700 bg-emerald-100 dark:text-emerald-300 dark:bg-emerald-900/30' : trend === 'down' ? 'text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900/30' : 'text-slate-700 bg-slate-100 dark:text-slate-300 dark:bg-slate-800'}`}>
-                {trend === 'up' ? <ArrowUpIcon className="h-3 w-3 mr-1" /> : trend === 'down' ? <ArrowDownIcon className="h-3 w-3 mr-1" /> : null}
+                {trend === 'up' ? <ArrowUpIcon className="h-3 w-3 mr-1" /> : trend === 'down' ? <ArrowDownIcon className="h-3 w-3 mr-1" /> : <MinusIcon className="h-3 w-3 mr-1" />}
                 {trendValue}
               </span>
             )}
-            {description && <span className={`text-xs ${colors.text.tertiary}`}>{description}</span>}
+            {description && <span className={`text-xs ${colors.text.tertiary} truncate`}>{description}</span>}
           </div>
         </div>
-        <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl" style={{ color }}>
+        <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl flex-shrink-0 ml-2" style={{ color }}>
           <Icon className="h-6 w-6" />
         </div>
       </div>
@@ -284,6 +304,27 @@ const DashboardScreen = () => {
 
   return (
     <div className="space-y-6 pb-8">
+      {/* Date Range Toggle */}
+      <div className="flex items-center justify-between">
+        <h2 className={`text-lg font-semibold ${colors.text.primary}`}>Overview</h2>
+        <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
+          {[
+            { key: 'daily', label: 'Today' },
+            { key: 'weekly', label: '7 Days' },
+            { key: 'monthly', label: '30 Days' },
+            { key: 'all', label: 'All' },
+          ].map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setSelectedRange(key)}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-200 ${selectedRange === key ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* 4-Col Grid for Key Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
         <StatCard
@@ -291,9 +332,9 @@ const DashboardScreen = () => {
           value={`₱${currentPeriodData.sales.toLocaleString()}`}
           icon={CurrencyDollarIcon}
           color="#8b5cf6" // purple
-          trend={currentPeriodData.growth > 0 ? 'up' : currentPeriodData.growth < 0 ? 'down' : null}
+          trend={currentPeriodData.growth > 0 ? 'up' : currentPeriodData.growth < 0 ? 'down' : (selectedRange === 'all' ? null : 'equal')}
           trendValue={formatPercent(currentPeriodData.growth)}
-          description="vs prev period"
+          description={selectedRange === 'all' ? 'All time' : 'vs prev period'}
         />
         <StatCard
           title={`${currentPeriodData.period} Total Cost`}
@@ -310,11 +351,11 @@ const DashboardScreen = () => {
           description="Revenue - Cost"
         />
         <StatCard
-          title="Total Orders"
-          value={salesMetrics.totalTransactions.toLocaleString()}
+          title="Total Sales"
+          value={(salesMetrics.periodTransactions ?? salesMetrics.totalTransactions ?? 0).toLocaleString()}
           icon={ShoppingBagIcon}
           color="#3b82f6" // blue
-          description="Lifetime"
+          description={getRangeLabel()}
           onClick={() => navigate('/sales')}
         />
       </div>
@@ -352,7 +393,7 @@ const DashboardScreen = () => {
           {/* Top Products Doughnut */}
           <div className={`${colors.card.primary} rounded-2xl shadow-sm border ${colors.border.primary} p-5`}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className={`text-lg font-bold ${colors.text.primary}`}>Top Sellers</h3>
+              <h3 className={`text-lg font-bold ${colors.text.primary}`}>Top Products Sold ({getRangeLabel()})</h3>
               <button className="text-purple-600 dark:text-purple-400 hover:text-purple-700 text-sm font-semibold flex items-center gap-1" onClick={() => navigate('/statistical-reports')}>
                 View All <ArrowTrendingUpIcon className="w-4 h-4" />
               </button>

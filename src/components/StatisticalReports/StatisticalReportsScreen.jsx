@@ -28,6 +28,7 @@ import {
   Squares2X2Icon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  MinusIcon,
 } from '@heroicons/react/24/outline';
 import { toast } from 'react-hot-toast';
 import {
@@ -641,6 +642,7 @@ const StatisticalReportsScreen = () => {
 
   const calculateSalesGrowth = (transactions, now) => {
     const periods = [
+      { key: 'daily', days: 1 },
       { key: 'weekly', days: 7 },
       { key: 'monthly', days: 30 },
       { key: 'quarterly', days: 90 },
@@ -650,52 +652,62 @@ const StatisticalReportsScreen = () => {
     const growth = {};
     const previousDataFlags = {};
 
+    const toDateString = (d) => d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+
     periods.forEach(({ key, days }) => {
-      // Use date string comparison for consistency with calculatePeriodSales
       const today = new Date(now);
-      today.setHours(0, 0, 0, 0); // Reset to start of day
+      today.setHours(0, 0, 0, 0);
+      const todayString = toDateString(today);
 
-      // Current period: from (today - days) to today (inclusive)
-      const currentPeriodStart = new Date(today);
-      currentPeriodStart.setDate(currentPeriodStart.getDate() - days);
-      const currentPeriodStartString = currentPeriodStart.getFullYear() + '-' +
-        String(currentPeriodStart.getMonth() + 1).padStart(2, '0') + '-' +
-        String(currentPeriodStart.getDate()).padStart(2, '0');
+      let currentPeriodStartString, previousPeriodStartString, previousPeriodEndString;
 
-      // Previous period: from (today - 2*days) to (today - days) (exclusive of current period start)
-      const previousPeriodStart = new Date(currentPeriodStart);
-      previousPeriodStart.setDate(previousPeriodStart.getDate() - days);
-      const previousPeriodStartString = previousPeriodStart.getFullYear() + '-' +
-        String(previousPeriodStart.getMonth() + 1).padStart(2, '0') + '-' +
-        String(previousPeriodStart.getDate()).padStart(2, '0');
+      if (key === 'daily') {
+        // Daily: current = today only, previous = yesterday only
+        currentPeriodStartString = todayString;
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        previousPeriodStartString = toDateString(yesterday);
+        previousPeriodEndString = previousPeriodStartString; // same day
+      } else {
+        // Current period: from (today - days) to today (inclusive)
+        const currentPeriodStart = new Date(today);
+        currentPeriodStart.setDate(currentPeriodStart.getDate() - days);
+        currentPeriodStartString = toDateString(currentPeriodStart);
 
-      const todayString = today.getFullYear() + '-' +
-        String(today.getMonth() + 1).padStart(2, '0') + '-' +
-        String(today.getDate()).padStart(2, '0');
+        // Previous period: from (today - 2*days) to (today - days - 1)
+        const previousPeriodStart = new Date(currentPeriodStart);
+        previousPeriodStart.setDate(previousPeriodStart.getDate() - days);
+        previousPeriodStartString = toDateString(previousPeriodStart);
 
-      // Calculate current period sales (from currentPeriodStart to today, inclusive)
+        const previousPeriodEnd = new Date(currentPeriodStart);
+        previousPeriodEnd.setDate(previousPeriodEnd.getDate() - 1);
+        previousPeriodEndString = toDateString(previousPeriodEnd);
+      }
+
+      // Calculate current period sales
       const currentSales = transactions
         .filter(t => {
           if (!t.timestamp) return false;
           const transactionDate = new Date(t.timestamp);
-          const transactionDateString = transactionDate.getFullYear() + '-' +
-            String(transactionDate.getMonth() + 1).padStart(2, '0') + '-' +
-            String(transactionDate.getDate()).padStart(2, '0');
+          const transactionDateString = toDateString(transactionDate);
           return transactionDateString >= currentPeriodStartString &&
             transactionDateString <= todayString;
         })
         .reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
 
-      // Calculate previous period sales (from previousPeriodStart to currentPeriodStart, exclusive)
+      // Calculate previous period sales
       const previousSales = transactions
         .filter(t => {
           if (!t.timestamp) return false;
           const transactionDate = new Date(t.timestamp);
-          const transactionDateString = transactionDate.getFullYear() + '-' +
-            String(transactionDate.getMonth() + 1).padStart(2, '0') + '-' +
-            String(transactionDate.getDate()).padStart(2, '0');
+          const transactionDateString = toDateString(transactionDate);
+          if (key === 'daily') {
+            return transactionDateString === previousPeriodStartString;
+          }
           return transactionDateString >= previousPeriodStartString &&
-            transactionDateString < currentPeriodStartString;
+            transactionDateString <= previousPeriodEndString;
         })
         .reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0);
 
@@ -704,21 +716,9 @@ const StatisticalReportsScreen = () => {
         growth[key] = ((currentSales - previousSales) / previousSales) * 100;
         previousDataFlags[key] = true;
       } else {
-        // If no previous sales data, set growth to null to indicate N/A
-        growth[key] = null;
+        growth[key] = currentSales > 0 ? 100 : 0;
         previousDataFlags[key] = false;
       }
-
-      // Debug logging
-      console.log(`Growth calculation for ${key}:`, {
-        currentPeriodStart: currentPeriodStartString,
-        today: todayString,
-        previousPeriodStart: previousPeriodStartString,
-        currentSales,
-        previousSales,
-        growth: growth[key],
-        hasPreviousData: previousDataFlags[key]
-      });
     });
 
     setHasPreviousData(previousDataFlags);
@@ -783,7 +783,14 @@ const StatisticalReportsScreen = () => {
     if (growth === null || growth === undefined) return null;
     if (growth > 0) return <ArrowTrendingUpIcon className="h-4 w-4 text-green-500" />;
     if (growth < 0) return <ArrowTrendingDownIcon className="h-4 w-4 text-red-500" />;
-    return <div className="h-4 w-4" />;
+    return <MinusIcon className="h-4 w-4 text-gray-500" />;
+  };
+
+  const getValueFontSize = (val) => {
+    const s = String(val);
+    if (s.length > 13) return 'text-lg';
+    if (s.length > 10) return 'text-xl';
+    return 'text-2xl';
   };
 
   const getGrowthColor = (growth) => {
@@ -799,8 +806,8 @@ const StatisticalReportsScreen = () => {
   };
 
   const growthLabel = (value, baselineExists, suffix) => {
-    if (!baselineExists || value === null || value === undefined) {
-      return `N/A vs ${suffix}`;
+    if (value === null || value === undefined) {
+      return `0% vs ${suffix}`;
     }
     return `${formatGrowth(value)} vs ${suffix}`;
   };
@@ -943,11 +950,7 @@ const StatisticalReportsScreen = () => {
       title: 'Dead stock',
       description: 'In-stock SKUs with no sales since the idle threshold you set below.',
     },
-    {
-      id: 'abc_analysis',
-      title: 'ABC analysis',
-      description: `Pareto classification by revenue for the current ${periodLabels[selectedPeriod] || selectedPeriod} view.`,
-    },
+    // ABC analysis export hidden (not included in thesis paper)
   ];
 
   const showMonthlyCard = selectedPeriod !== 'weekly';
@@ -1014,16 +1017,16 @@ const StatisticalReportsScreen = () => {
           <div className="flex items-center justify-between">
             <div>
               <h3 className={`${colors.text.secondary} text-sm`}>{selectedPeriod === 'yearly' ? 'Avg. Daily Sales' : 'Daily Sales'}</h3>
-              <p className={`text-2xl font-bold ${colors.text.primary}`}>{formatCurrency(salesData.daily || 0)}</p>
+              <p className={`${getValueFontSize(formatCurrency(salesData.daily || 0))} font-bold ${colors.text.primary}`}>{formatCurrency(salesData.daily || 0)}</p>
             </div>
             <div className="p-3 bg-blue-100 dark:bg-blue-900/20 rounded-full">
               <CurrencyDollarIcon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
             </div>
           </div>
           <div className="flex items-center mt-2">
-            {getGrowthIcon(salesGrowth.weekly)}
-            <span className={`text-sm ml-1 ${getGrowthColor(salesGrowth.weekly)}`}>
-              {growthLabel(salesGrowth.weekly, hasPreviousData.weekly, 'last week')}
+            {getGrowthIcon(salesGrowth.daily)}
+            <span className={`text-sm ml-1 ${getGrowthColor(salesGrowth.daily)}`}>
+              {growthLabel(salesGrowth.daily, hasPreviousData.daily, 'yesterday')}
             </span>
           </div>
         </div>
@@ -1032,7 +1035,7 @@ const StatisticalReportsScreen = () => {
           <div className="flex items-center justify-between">
             <div>
               <h3 className={`${colors.text.secondary} text-sm`}>{selectedPeriod === 'yearly' ? 'Avg. Weekly Sales' : 'Weekly Sales'}</h3>
-              <p className={`text-2xl font-bold ${colors.text.primary}`}>{formatCurrency(salesData.weekly || 0)}</p>
+              <p className={`${getValueFontSize(formatCurrency(salesData.weekly || 0))} font-bold ${colors.text.primary}`}>{formatCurrency(salesData.weekly || 0)}</p>
             </div>
             <div className="p-3 bg-green-100 dark:bg-green-900/20 rounded-full">
               <ArrowTrendingUpIcon className="h-6 w-6 text-green-600 dark:text-green-400" />
@@ -1051,7 +1054,7 @@ const StatisticalReportsScreen = () => {
           <div className="flex items-center justify-between">
             <div>
               <h3 className={`${colors.text.secondary} text-sm`}>{selectedPeriod === 'yearly' ? 'Avg. Monthly Sales' : 'Monthly Sales'}</h3>
-              <p className={`text-2xl font-bold ${colors.text.primary}`}>{formatCurrency(salesData.monthly || 0)}</p>
+              <p className={`${getValueFontSize(formatCurrency(salesData.monthly || 0))} font-bold ${colors.text.primary}`}>{formatCurrency(salesData.monthly || 0)}</p>
             </div>
             <div className="p-3 bg-purple-100 dark:bg-purple-900/20 rounded-full">
               <ShoppingBagIcon className="h-6 w-6 text-purple-600 dark:text-purple-400" />
@@ -1071,7 +1074,7 @@ const StatisticalReportsScreen = () => {
           <div className="flex items-center justify-between">
             <div>
               <h3 className={`${colors.text.secondary} text-sm`}>Yearly Sales</h3>
-              <p className={`text-2xl font-bold ${colors.text.primary}`}>{formatCurrency(salesData.yearly || 0)}</p>
+              <p className={`${getValueFontSize(formatCurrency(salesData.yearly || 0))} font-bold ${colors.text.primary}`}>{formatCurrency(salesData.yearly || 0)}</p>
             </div>
             <div className="p-3 bg-yellow-100 dark:bg-yellow-900/20 rounded-full">
               <CalendarIcon className="h-6 w-6 text-yellow-600 dark:text-yellow-400" />
@@ -1329,102 +1332,8 @@ const StatisticalReportsScreen = () => {
         </div>
       </div>
 
-      {/* ABC Analysis */}
-      <div className={`${colors.card.primary} p-6 rounded-lg shadow border ${colors.border.primary}`}>
-        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-indigo-100 dark:bg-indigo-900/30">
-              <Squares2X2Icon className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-            </div>
-            <div>
-              <h2 className={`text-lg font-semibold ${colors.text.primary}`}>ABC Analysis</h2>
-              <p className={`text-xs ${colors.text.tertiary}`}>
-                Pareto classification by revenue for the {selectedPeriod} period.
-                A = top ~80%, B = next ~15%, C = bottom ~5%.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Class summary */}
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          {['A', 'B', 'C'].map(bucket => {
-            const items = abcAnalysis.filter(p => p.bucket === bucket);
-            const revenue = items.reduce((s, p) => s + Number(p.revenue || 0), 0);
-            const totalRevenue = abcAnalysis.reduce((s, p) => s + Number(p.revenue || 0), 0);
-            const share = totalRevenue > 0 ? (revenue / totalRevenue) * 100 : 0;
-            const tone = bucket === 'A'
-              ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
-              : bucket === 'B'
-                ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
-                : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300';
-            return (
-              <div key={bucket} className={`${colors.bg.secondary} rounded-lg p-3 border ${colors.border.primary}`}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${tone}`}>Class {bucket}</span>
-                  <span className={`text-xs ${colors.text.tertiary}`}>{items.length} items</span>
-                </div>
-                <p className={`text-base font-bold ${colors.text.primary}`}>{formatCurrency(revenue)}</p>
-                <p className={`text-xs ${colors.text.tertiary}`}>{share.toFixed(1)}% of revenue</p>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className={`min-w-full divide-y ${colors.border.primary}`}>
-            <thead className={`${colors.bg.secondary}`}>
-              <tr>
-                <th className={`px-4 py-2 text-left text-xs font-medium ${colors.text.secondary} uppercase`}>Rank</th>
-                <th className={`px-4 py-2 text-left text-xs font-medium ${colors.text.secondary} uppercase`}>Product</th>
-                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Units</th>
-                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Revenue</th>
-                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Share %</th>
-                <th className={`px-4 py-2 text-right text-xs font-medium ${colors.text.secondary} uppercase`}>Cumulative %</th>
-                <th className={`px-4 py-2 text-center text-xs font-medium ${colors.text.secondary} uppercase`}>Class</th>
-              </tr>
-            </thead>
-            <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
-              {abcAnalysis.length === 0 && (
-                <tr>
-                  <td colSpan={7} className={`px-4 py-6 text-center text-sm ${colors.text.tertiary}`}>
-                    No sales data for this period.
-                  </td>
-                </tr>
-              )}
-              {paginatedAbc.map((p) => {
-                const tone = p.bucket === 'A'
-                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                  : p.bucket === 'B'
-                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                    : 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300';
-                return (
-                  <tr key={p.id}>
-                    <td className={`px-4 py-2 text-sm ${colors.text.secondary}`}>{p.rank}</td>
-                    <td className={`px-4 py-2 text-sm font-medium ${colors.text.primary}`}>{p.name}</td>
-                    <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{p.quantity}</td>
-                    <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{formatCurrency(p.revenue)}</td>
-                    <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{p.sharePct.toFixed(1)}%</td>
-                    <td className={`px-4 py-2 text-sm text-right ${colors.text.secondary}`}>{p.cumulativePct.toFixed(1)}%</td>
-                    <td className="px-4 py-2 text-sm text-center">
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${tone}`}>{p.bucket}</span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {renderPagination({
-            currentPage: abcCurrentPage,
-            totalPages: abcTotalPages,
-            onChange: (page) => setAbcPage(Math.max(1, Math.min(page, abcTotalPages))),
-            totalItems: abcAnalysis.length,
-            startIndex: abcStart,
-            endIndex: abcEnd,
-            label: 'products',
-          })}
-        </div>
-      </div>
+      {/* ABC Analysis - Hidden (not included in thesis paper) */}
+      {/* ABC Analysis section has been intentionally hidden from the UI */}
     </div>
 
     {showExportModal && (

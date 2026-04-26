@@ -1840,16 +1840,23 @@ app.put('/api/users/:id', async (req, res) => {
       return res.status(400).json({ error: 'Email is already taken by another user' });
     }
 
-    let updateQuery = 'UPDATE users SET name = ?, email = ?, role = ?, permissions = ? WHERE id = ?';
-    let updateParams = [name, email, role, JSON.stringify(permissions || []), id];
+    const updates = ['name = ?', 'email = ?', 'permissions = ?'];
+    const updateParams = [name, email, JSON.stringify(permissions || [])];
+
+    if (role !== undefined) {
+      updates.push('role = ?');
+      updateParams.push(role);
+    }
 
     // If password is provided, update it too
     if (password && password.trim() !== '') {
       const saltRounds = 10;
-      const password_hash = await bcrypt.hash(password, saltRounds);
-      updateQuery = 'UPDATE users SET name = ?, email = ?, password_hash = ?, role = ?, permissions = ? WHERE id = ?';
-      updateParams = [name, email, password_hash, role, JSON.stringify(permissions || []), id];
+      updates.push('password_hash = ?');
+      updateParams.push(await bcrypt.hash(password, saltRounds));
     }
+
+    updateParams.push(id);
+    const updateQuery = `UPDATE users SET ${updates.join(', ')} WHERE id = ?`;
 
     const [result] = execute(updateQuery, updateParams);
 
@@ -3098,9 +3105,13 @@ app.post('/api/audits', async (req, res) => {
 
 app.get('/api/dashboard/summary', async (req, res) => {
   try {
-    const period = req.query.period === 'monthly' ? 'monthly' : 'weekly';
+    const validPeriods = ['daily', 'weekly', 'monthly', 'all'];
+    const period = validPeriods.includes(req.query.period) ? req.query.period : 'weekly';
+    // trendPeriod controls the Sales Overview chart independently
+    const trendPeriod = ['weekly', 'monthly'].includes(req.query.trendPeriod) ? req.query.trendPeriod : period;
     const lowStockThreshold = Math.max(1, toInt(req.query.lowStockThreshold, 10));
-    const periodDays = period === 'monthly' ? 30 : 7;
+    const periodDays = period === 'all' ? null : period === 'monthly' ? 30 : period === 'daily' ? 1 : 7;
+    const trendDays = trendPeriod === 'monthly' ? 30 : 7;
 
     const [productRows] = execute(
       `SELECT
@@ -3121,20 +3132,23 @@ app.get('/api/dashboard/summary', async (req, res) => {
         COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS weeklySales,
         COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS monthlySales,
         COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-14 days') AND timestamp < datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS previousWeekSales,
-        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-60 days') AND timestamp < datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS previousMonthSales
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-60 days') AND timestamp < datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS previousMonthSales,
+        COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-1 days', 'start of day') AND timestamp < datetime('now', 'start of day') THEN total ELSE 0 END), 0) AS previousDaySales
       FROM transactions
       WHERE archived_at IS NULL`
     );
 
-    const [periodCostRows] = execute(
-      `SELECT
-        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_cost, 0)), 0) AS periodCost
-      FROM transaction_items ti
-      JOIN transactions t ON t.id = ti.transaction_id
-      WHERE t.archived_at IS NULL
-        AND t.timestamp >= datetime('now', ?)`,
-      [`-${periodDays} days`]
-    );
+    const periodCostQuery = period === 'all'
+      ? `SELECT COALESCE(SUM(ti.quantity * COALESCE(ti.unit_cost, 0)), 0) AS periodCost
+         FROM transaction_items ti
+         JOIN transactions t ON t.id = ti.transaction_id
+         WHERE t.archived_at IS NULL`
+      : `SELECT COALESCE(SUM(ti.quantity * COALESCE(ti.unit_cost, 0)), 0) AS periodCost
+         FROM transaction_items ti
+         JOIN transactions t ON t.id = ti.transaction_id
+         WHERE t.archived_at IS NULL
+           AND t.timestamp >= datetime('now', '-${periodDays} days')`;
+    const [periodCostRows] = execute(periodCostQuery);
 
     const [recentRows] = execute(
       `SELECT
@@ -3151,23 +3165,35 @@ app.get('/api/dashboard/summary', async (req, res) => {
       LIMIT 4`
     );
 
-    const [topRows] = execute(
-      `SELECT
-        ti.product_id AS id,
-        COALESCE(p.name, 'Unknown Product') AS name,
-        COALESCE(p.category_name, 'Uncategorized') AS category,
-        COALESCE(SUM(ti.quantity), 0) AS sales,
-        COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue
-      FROM transaction_items ti
-      JOIN transactions t ON t.id = ti.transaction_id
-      LEFT JOIN products p ON p.id = ti.product_id
-      WHERE t.archived_at IS NULL
-        AND t.timestamp >= datetime('now', ?)
-      GROUP BY ti.product_id
-      ORDER BY sales DESC
-      LIMIT 5`,
-      [`-${periodDays} days`]
-    );
+    const topRowsQuery = period === 'all'
+      ? `SELECT
+          ti.product_id AS id,
+          COALESCE(p.name, 'Unknown Product') AS name,
+          COALESCE(p.category_name, 'Uncategorized') AS category,
+          COALESCE(SUM(ti.quantity), 0) AS sales,
+          COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue
+        FROM transaction_items ti
+        JOIN transactions t ON t.id = ti.transaction_id
+        LEFT JOIN products p ON p.id = ti.product_id
+        WHERE t.archived_at IS NULL
+        GROUP BY ti.product_id
+        ORDER BY sales DESC
+        LIMIT 5`
+      : `SELECT
+          ti.product_id AS id,
+          COALESCE(p.name, 'Unknown Product') AS name,
+          COALESCE(p.category_name, 'Uncategorized') AS category,
+          COALESCE(SUM(ti.quantity), 0) AS sales,
+          COALESCE(SUM(ti.quantity * COALESCE(ti.unit_price, 0)), 0) AS revenue
+        FROM transaction_items ti
+        JOIN transactions t ON t.id = ti.transaction_id
+        LEFT JOIN products p ON p.id = ti.product_id
+        WHERE t.archived_at IS NULL
+          AND t.timestamp >= datetime('now', '-${periodDays} days')
+        GROUP BY ti.product_id
+        ORDER BY sales DESC
+        LIMIT 5`;
+    const [topRows] = execute(topRowsQuery);
 
     const [trendRows] = execute(
       `SELECT
@@ -3178,12 +3204,12 @@ app.get('/api/dashboard/summary', async (req, res) => {
         AND timestamp >= datetime('now', ?)
       GROUP BY date(timestamp)
       ORDER BY sale_date ASC`,
-      [`-${periodDays - 1} days`]
+      [`-${trendDays - 1} days`]
     );
 
     const trendMap = new Map((trendRows || []).map((row) => [row.sale_date, Number(row.total || 0)]));
     const salesTrend = [];
-    for (let i = periodDays - 1; i >= 0; i--) {
+    for (let i = trendDays - 1; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -3196,14 +3222,30 @@ app.get('/api/dashboard/summary', async (req, res) => {
     const metrics = metricsRows?.[0] || {};
     const totalSales = Number(metrics.totalSales || 0);
     const totalTransactions = Number(metrics.totalTransactions || 0);
+    const dailySales = Number(metrics.dailySales || 0);
     const weeklySales = Number(metrics.weeklySales || 0);
     const monthlySales = Number(metrics.monthlySales || 0);
+    const previousDaySales = Number(metrics.previousDaySales || 0);
     const previousWeekSales = Number(metrics.previousWeekSales || 0);
     const previousMonthSales = Number(metrics.previousMonthSales || 0);
+    const dailyGrowth = previousDaySales > 0 ? ((dailySales - previousDaySales) / previousDaySales) * 100 : (dailySales > 0 ? 100 : 0);
     const weeklyGrowth = previousWeekSales > 0 ? ((weeklySales - previousWeekSales) / previousWeekSales) * 100 : (weeklySales > 0 ? 100 : 0);
     const monthlyGrowth = previousMonthSales > 0 ? ((monthlySales - previousMonthSales) / previousMonthSales) * 100 : (monthlySales > 0 ? 100 : 0);
     const averageOrderValue = totalTransactions > 0 ? totalSales / totalTransactions : 0;
     const periodCost = Number(periodCostRows?.[0]?.periodCost || 0);
+
+    // Determine the revenue for the selected period
+    const periodRevenue = period === 'all' ? totalSales : period === 'monthly' ? monthlySales : period === 'daily' ? dailySales : weeklySales;
+    const periodGrowth = period === 'all' ? 0 : period === 'monthly' ? monthlyGrowth : period === 'daily' ? dailyGrowth : weeklyGrowth;
+
+    // Count transactions for the selected period
+    const periodTransactionsQuery = period === 'all'
+      ? `SELECT COUNT(*) AS cnt FROM transactions WHERE archived_at IS NULL`
+      : period === 'daily'
+        ? `SELECT COUNT(*) AS cnt FROM transactions WHERE archived_at IS NULL AND timestamp >= datetime('now', 'start of day')`
+        : `SELECT COUNT(*) AS cnt FROM transactions WHERE archived_at IS NULL AND timestamp >= datetime('now', '-${periodDays} days')`;
+    const [periodTransactionRows] = execute(periodTransactionsQuery);
+    const periodTransactions = Number(periodTransactionRows?.[0]?.cnt || 0);
 
     const response = {
       summary: {
@@ -3214,18 +3256,22 @@ app.get('/api/dashboard/summary', async (req, res) => {
       },
       salesMetrics: {
         totalSales,
-        dailySales: Number(metrics.dailySales || 0),
+        dailySales,
         weeklySales,
         monthlySales,
+        dailyGrowth: Number(dailyGrowth || 0),
         weeklyGrowth: Number(weeklyGrowth || 0),
         monthlyGrowth: Number(monthlyGrowth || 0),
         averageOrderValue,
         totalTransactions,
+        periodTransactions,
         // Keep dashboard cost/profit scoped to the selected period for faster queries.
         totalCost: periodCost,
         currentPeriodCost: periodCost,
-        grossProfit: (period === 'monthly' ? monthlySales : weeklySales) - periodCost,
-        currentPeriodProfit: (period === 'monthly' ? monthlySales : weeklySales) - periodCost,
+        grossProfit: periodRevenue - periodCost,
+        currentPeriodProfit: periodRevenue - periodCost,
+        periodRevenue,
+        periodGrowth,
       },
       recentTransactions: (recentRows || []).map((row) => ({
         id: row.id,
@@ -3700,6 +3746,8 @@ app.get('/api/statistical-reports/summary', async (req, res) => {
     } else {
       const [growthRows] = execute(
         `SELECT
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', 'start of day') THEN total ELSE 0 END), 0) AS currentDaily,
+          COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-1 days', 'start of day') AND timestamp < datetime('now', 'start of day') THEN total ELSE 0 END), 0) AS previousDaily,
           COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS currentWeekly,
           COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-14 days') AND timestamp < datetime('now', '-7 days') THEN total ELSE 0 END), 0) AS previousWeekly,
           COALESCE(SUM(CASE WHEN timestamp >= datetime('now', '-30 days') THEN total ELSE 0 END), 0) AS currentMonthly,
@@ -3715,12 +3763,14 @@ app.get('/api/statistical-reports/summary', async (req, res) => {
       const growthSource = growthRows?.[0] || {};
       const growthFor = (current, previous) => previous > 0 ? ((current - previous) / previous) * 100 : (current > 0 ? 100 : 0);
       growthPayload = {
+        daily: Number(growthFor(Number(growthSource.currentDaily || 0), Number(growthSource.previousDaily || 0))),
         weekly: Number(growthFor(Number(growthSource.currentWeekly || 0), Number(growthSource.previousWeekly || 0))),
         monthly: Number(growthFor(Number(growthSource.currentMonthly || 0), Number(growthSource.previousMonthly || 0))),
         quarterly: Number(growthFor(Number(growthSource.currentQuarterly || 0), Number(growthSource.previousQuarterly || 0))),
         yearly: Number(growthFor(Number(growthSource.currentYearly || 0), Number(growthSource.previousYearly || 0))),
       };
       hasPreviousData = {
+        daily: Number(growthSource.previousDaily || 0) > 0,
         weekly: Number(growthSource.previousWeekly || 0) > 0,
         monthly: Number(growthSource.previousMonthly || 0) > 0,
         quarterly: Number(growthSource.previousQuarterly || 0) > 0,

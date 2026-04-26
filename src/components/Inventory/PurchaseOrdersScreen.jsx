@@ -28,6 +28,19 @@ import InvoicePreviewModal from './InvoicePreviewModal';
 import ModalPortal from '../common/ModalPortal';
 import LazyPageLoader from '../common/LazyPageLoader';
 
+// Helper to format elapsed duration
+const formatElapsedTime = (dateString) => {
+  if (!dateString) return '—';
+  const start = parseLocalTimestamp(dateString);
+  const now = new Date();
+  const diffMs = now - start;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  if (diffDays > 0) return `${diffDays}d ${diffHours}h`;
+  if (diffHours > 0) return `${diffHours}h`;
+  return 'Just now';
+};
+
 const PurchaseOrdersScreen = () => {
   const navigate = useNavigate();
   const { colors } = useTheme();
@@ -514,6 +527,9 @@ const PurchaseOrdersScreen = () => {
                   Total
                 </th>
                 <th className={`px-6 py-3 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>
+                  Received / Status Date
+                </th>
+                <th className={`px-6 py-3 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>
                   Actions
                 </th>
               </tr>
@@ -521,7 +537,7 @@ const PurchaseOrdersScreen = () => {
             <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
               {filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className={`px-6 py-8 text-center ${colors.text.secondary}`}>
+                  <td colSpan="7" className={`px-6 py-8 text-center ${colors.text.secondary}`}>
                     {searchTerm || statusFilter !== 'all' || dateFilter.startDate || dateFilter.endDate
                       ? 'No purchase orders match your filters'
                       : 'No purchase orders yet'}
@@ -596,6 +612,24 @@ const PurchaseOrdersScreen = () => {
                     </td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${colors.text.primary}`}>
                       {formatCurrency(order.total)}
+                    </td>
+                    <td className={`px-6 py-4 whitespace-nowrap text-sm ${colors.text.secondary}`}>
+                      {order.status === 'received' ? (
+                        <span className="text-green-600 dark:text-green-400">
+                          {formatDate(order.updated_at)}
+                        </span>
+                      ) : order.status === 'cancelled' ? (
+                        <span className="text-red-600 dark:text-red-400">
+                          {formatDate(order.updated_at)}
+                        </span>
+                      ) : (order.status === 'ordered' || order.status === 'pending') ? (
+                        <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                          <ClipboardDocumentListIcon className="h-3.5 w-3.5" />
+                          Pending for {formatElapsedTime(order.order_date)}
+                        </span>
+                      ) : (
+                        <span>—</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center gap-2">
