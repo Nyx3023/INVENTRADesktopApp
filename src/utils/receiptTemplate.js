@@ -56,6 +56,32 @@ const normalizeItems = (items) => {
 
 const formatMoney = (value) => defaultFormatter.format(Number(value || 0));
 
+const parseReceiptTimestamp = (rawValue) => {
+  if (!rawValue) return new Date(NaN);
+  const value = String(rawValue);
+
+  if (value.includes('Z') || /[+-]\d{2}:\d{2}$/.test(value)) {
+    return new Date(value);
+  }
+
+  // SQLite/MySQL DATETIME values are usually "YYYY-MM-DD HH:mm:ss" (UTC in this app).
+  const utcParts = value.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+  if (utcParts) {
+    const [, year, month, day, hours, minutes, seconds] = utcParts;
+    return new Date(Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hours),
+      Number(minutes),
+      Number(seconds)
+    ));
+  }
+
+  // For ISO-like local strings without timezone (e.g. POS immediate print), keep local parse.
+  return new Date(value);
+};
+
 const miniLogoSvg = `
 <svg width="160" height="160" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
   <circle cx="80" cy="80" r="74" fill="#ffffff" stroke="#111111" stroke-width="6"/>
@@ -72,9 +98,13 @@ const defaultLogoDataUri = `data:image/svg+xml;utf8,${encodeURIComponent(miniLog
 
 export const buildReceiptHtml = (transaction, config) => {
   const items = normalizeItems(transaction.items);
-  const paymentMethod = (transaction.paymentMethod ||
+  const rawPaymentMethod = (
+    transaction.paymentMethod ||
     transaction.payment_method ||
-    'cash').toString().toUpperCase();
+    'cash'
+  ).toString();
+  const paymentMethod = rawPaymentMethod.toUpperCase();
+  const isCashPayment = rawPaymentMethod.toLowerCase() === 'cash';
 
   const referenceNumber =
     transaction.referenceNumber || transaction.reference_number || '';
@@ -82,12 +112,12 @@ export const buildReceiptHtml = (transaction, config) => {
   const receivedAmount =
     transaction.receivedAmount ??
     transaction.received_amount ??
-    (paymentMethod === 'CASH' ? transaction.total : transaction.total);
+    (isCashPayment ? transaction.total : transaction.total);
 
   const changeAmount =
     transaction.change ??
     transaction.change_amount ??
-    (paymentMethod === 'CASH'
+    (isCashPayment
       ? (receivedAmount || 0) - (transaction.total || 0)
       : 0);
 
@@ -98,8 +128,10 @@ export const buildReceiptHtml = (transaction, config) => {
     transaction.user ||
     '';
 
-  const transactionDate = transaction.timestamp
-    ? new Date(transaction.timestamp).toLocaleString()
+  const transactionTimestamp = transaction.timestamp || transaction.created_at;
+  const parsedTimestamp = parseReceiptTimestamp(transactionTimestamp);
+  const transactionDate = !Number.isNaN(parsedTimestamp.getTime())
+    ? parsedTimestamp.toLocaleString()
     : new Date().toLocaleString();
 
   const footerText = escapeHtml(
@@ -385,7 +417,7 @@ export const buildReceiptHtml = (transaction, config) => {
     <!-- Payment Info -->
     <div class="payment-section">
       <div class="payment-method">Payment: ${escapeHtml(paymentMethod)}</div>
-      ${paymentMethod === 'CASH' ? `
+      ${isCashPayment ? `
       <div class="summary-line">
         <span>Received:</span>
         <span>${formatMoney(receivedAmount)}</span>

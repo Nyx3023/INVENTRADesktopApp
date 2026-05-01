@@ -168,15 +168,15 @@ const ReceiptModal = ({ transaction, onClose, onPrint }) => {
           </div>
 
           {/* Payment Details */}
-          {transaction.payment_method === 'cash' && (
+          {((transaction.payment_method || transaction.paymentMethod || '').toLowerCase() === 'cash') && (
             <div className="space-y-2 mb-6">
               <div className={`flex justify-between text-sm ${colors.text.primary} print:text-black`}>
                 <span>Amount Received:</span>
-                <span>{formatCurrency(transaction.received_amount)}</span>
+                <span>{formatCurrency(transaction.received_amount ?? transaction.receivedAmount ?? 0)}</span>
               </div>
               <div className={`flex justify-between text-sm ${colors.text.primary} print:text-black`}>
                 <span>{t('change')}:</span>
-                <span>{formatCurrency(transaction.change_amount)}</span>
+                <span>{formatCurrency(transaction.change_amount ?? transaction.change ?? 0)}</span>
               </div>
             </div>
           )}

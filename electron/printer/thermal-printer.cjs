@@ -42,6 +42,31 @@ function money(value) {
   return Number(value || 0).toFixed(2);
 }
 
+function parseReceiptTimestamp(rawValue) {
+  if (!rawValue) return new Date(NaN);
+  const value = String(rawValue);
+
+  if (value.includes('Z') || /[+-]\d{2}:\d{2}$/.test(value)) {
+    return new Date(value);
+  }
+
+  const parts = value.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+  if (parts) {
+    const [, year, month, day, hours, minutes, seconds] = parts;
+    return new Date(Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hours),
+      Number(minutes),
+      Number(seconds),
+      0
+    ));
+  }
+
+  return new Date(value);
+}
+
 function makeReceiptId(transaction) {
   if (transaction?.id) return String(transaction.id);
   const payload = JSON.stringify(transaction || {});
@@ -462,7 +487,8 @@ class ThermalPrinterManager extends EventEmitter {
     const store = data?.store || tx.store || {};
     const items = Array.isArray(tx.items) ? tx.items : [];
     const receiptId = makeReceiptId(tx);
-    const dateText = new Date(tx.timestamp || Date.now()).toLocaleString();
+    const parsedTimestamp = parseReceiptTimestamp(tx.timestamp || tx.created_at);
+    const dateText = (Number.isNaN(parsedTimestamp.getTime()) ? new Date() : parsedTimestamp).toLocaleString();
     const cashier = sanitizeText(tx.userName || tx.user_name || tx.cashier || 'N/A');
     const footer = sanitizeText(data?.footerText || 'Thank you for your purchase!');
 
@@ -496,10 +522,15 @@ class ThermalPrinterManager extends EventEmitter {
     }
     chunks.push(this._line('right', `TAX: ${money(tx.tax)}`));
     chunks.push(this._line('right', `TOTAL: ${money(tx.total)}`, { bold: true, double: true }));
-    chunks.push(this._line('left', `Payment: ${sanitizeText(tx.paymentMethod || 'Cash')}`, { bold: true }));
-    if (typeof tx.receivedAmount !== 'undefined') {
-      chunks.push(this._line('right', `Received: ${money(tx.receivedAmount)}`));
-      chunks.push(this._line('right', `Change: ${money(tx.change)}`));
+    const paymentMethodRaw = tx.paymentMethod || tx.payment_method || 'cash';
+    const paymentMethod = String(paymentMethodRaw).toUpperCase();
+    const isCashPayment = String(paymentMethodRaw).toLowerCase() === 'cash';
+    chunks.push(this._line('left', `Payment: ${sanitizeText(paymentMethod)}`, { bold: true }));
+    const receivedAmount = tx.receivedAmount ?? tx.received_amount;
+    const changeAmount = tx.change ?? tx.change_amount;
+    if (isCashPayment && typeof receivedAmount !== 'undefined' && receivedAmount !== null) {
+      chunks.push(this._line('right', `Received: ${money(receivedAmount)}`));
+      chunks.push(this._line('right', `Change: ${money(changeAmount)}`));
     }
     chunks.push(this._line('center', '================================'));
     chunks.push(this._line('center', footer, { bold: true }));

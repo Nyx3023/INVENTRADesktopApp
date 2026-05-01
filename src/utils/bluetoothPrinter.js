@@ -35,6 +35,31 @@ const COMMANDS = {
   }
 };
 
+const parseReceiptTimestamp = (rawValue) => {
+  if (!rawValue) return new Date(NaN);
+  const value = String(rawValue);
+
+  if (value.includes('Z') || /[+-]\d{2}:\d{2}$/.test(value)) {
+    return new Date(value);
+  }
+
+  const parts = value.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+  if (parts) {
+    const [, year, month, day, hours, minutes, seconds] = parts;
+    return new Date(Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hours),
+      Number(minutes),
+      Number(seconds),
+      0
+    ));
+  }
+
+  return new Date(value);
+};
+
 class BluetoothThermalPrinter {
   constructor() {
     this.device = null;
@@ -236,7 +261,8 @@ class BluetoothThermalPrinter {
       await this.printSeparator('=');
       await this.printText(`Receipt #: ${transaction.id}`, { bold: true });
       await this.printLine();
-      await this.printText(`Date: ${new Date(transaction.timestamp).toLocaleString('en-US', {
+      const parsedTimestamp = parseReceiptTimestamp(transaction.timestamp || transaction.created_at);
+      await this.printText(`Date: ${(Number.isNaN(parsedTimestamp.getTime()) ? new Date() : parsedTimestamp).toLocaleString('en-US', {
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
@@ -294,12 +320,17 @@ class BluetoothThermalPrinter {
       await this.printLine(2);
 
       // Payment info
-      await this.printText(`Payment: ${transaction.paymentMethod || 'Cash'}`, { bold: true });
+      const paymentMethodRaw = transaction.paymentMethod || transaction.payment_method || 'cash';
+      const paymentMethod = String(paymentMethodRaw).toUpperCase();
+      const isCashPayment = String(paymentMethodRaw).toLowerCase() === 'cash';
+      await this.printText(`Payment: ${paymentMethod}`, { bold: true });
       await this.printLine();
-      if (transaction.receivedAmount) {
-        await this.printText(`Received:    ₱${Number(transaction.receivedAmount).toFixed(2)}`, { align: 'right' });
+      const receivedAmount = transaction.receivedAmount ?? transaction.received_amount;
+      const changeAmount = transaction.change ?? transaction.change_amount;
+      if (isCashPayment && receivedAmount !== undefined && receivedAmount !== null) {
+        await this.printText(`Received:    ₱${Number(receivedAmount).toFixed(2)}`, { align: 'right' });
         await this.printLine();
-        await this.printText(`Change:      ₱${Number(transaction.change || 0).toFixed(2)}`, { align: 'right' });
+        await this.printText(`Change:      ₱${Number(changeAmount || 0).toFixed(2)}`, { align: 'right' });
         await this.printLine();
       }
 

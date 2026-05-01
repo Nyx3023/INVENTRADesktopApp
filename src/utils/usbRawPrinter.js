@@ -5,6 +5,31 @@
  * for WebUSB to access it. Windows drivers will claim exclusive access.
  */
 
+const parseReceiptTimestamp = (rawValue) => {
+  if (!rawValue) return new Date(NaN);
+  const value = String(rawValue);
+
+  if (value.includes('Z') || /[+-]\d{2}:\d{2}$/.test(value)) {
+    return new Date(value);
+  }
+
+  const parts = value.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+  if (parts) {
+    const [, year, month, day, hours, minutes, seconds] = parts;
+    return new Date(Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hours),
+      Number(minutes),
+      Number(seconds),
+      0
+    ));
+  }
+
+  return new Date(value);
+};
+
 class USBRawPrinter {
   constructor() {
     this.device = null;
@@ -280,7 +305,8 @@ class USBRawPrinter {
       data = this.concatArrays(data, this.textToEscPos(`Receipt #: ${receiptId}`, { bold: true }));
       data = this.concatArrays(data, this.lineFeed(1));
 
-      const dateStr = new Date(transaction.timestamp).toLocaleString('en-US', {
+      const parsedTimestamp = parseReceiptTimestamp(transaction.timestamp || transaction.created_at);
+      const dateStr = (Number.isNaN(parsedTimestamp.getTime()) ? new Date() : parsedTimestamp).toLocaleString('en-US', {
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
@@ -349,14 +375,18 @@ class USBRawPrinter {
       data = this.concatArrays(data, this.lineFeed(2));
 
       // --- PAYMENT ---
-      const paymentMethod = transaction.paymentMethod || 'Cash';
+      const paymentMethodRaw = transaction.paymentMethod || transaction.payment_method || 'cash';
+      const paymentMethod = String(paymentMethodRaw).toUpperCase();
+      const isCashPayment = String(paymentMethodRaw).toLowerCase() === 'cash';
       data = this.concatArrays(data, this.textToEscPos(`Payment: ${paymentMethod}`, { bold: true }));
       data = this.concatArrays(data, this.lineFeed(1));
 
-      if (transaction.receivedAmount !== undefined) {
-        data = this.concatArrays(data, this.textToEscPos(`Received:    ₱${Number(transaction.receivedAmount).toFixed(2)}`, { align: 'right' }));
+      const receivedAmount = transaction.receivedAmount ?? transaction.received_amount;
+      const changeAmount = transaction.change ?? transaction.change_amount;
+      if (isCashPayment && receivedAmount !== undefined && receivedAmount !== null) {
+        data = this.concatArrays(data, this.textToEscPos(`Received:    ₱${Number(receivedAmount).toFixed(2)}`, { align: 'right' }));
         data = this.concatArrays(data, this.lineFeed(1));
-        data = this.concatArrays(data, this.textToEscPos(`Change:      ₱${Number(transaction.change || 0).toFixed(2)}`, { align: 'right' }));
+        data = this.concatArrays(data, this.textToEscPos(`Change:      ₱${Number(changeAmount || 0).toFixed(2)}`, { align: 'right' }));
         data = this.concatArrays(data, this.lineFeed(1));
       }
       data = this.concatArrays(data, this.lineFeed(1));
