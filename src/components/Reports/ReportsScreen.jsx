@@ -29,7 +29,7 @@ const ReportsScreen = () => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [reportData, setReportData] = useState({
-    sales: [],
+    sales: { dailySales: [], productSales: [], categorySales: [], summary: {} },
     transactions: [],
     stockMovement: [],
     restocking: []
@@ -119,15 +119,24 @@ const ReportsScreen = () => {
 
   const exportReport = (format = 'csv') => {
     const data = reportData[activeReport];
+    
+    // Check if sales data has the expected structure
+    const isSalesObject = activeReport === 'sales' && data && !Array.isArray(data) && data.dailySales;
+    
+    if ((!data || data.length === 0) && !isSalesObject) {
+      toast.error('No data to export');
+      return;
+    }
+
     let csvContent = '';
     let headers = [];
     let rows = [];
 
     switch (activeReport) {
       case 'sales':
-        if (data.dailySales) {
+        if (isSalesObject || data.dailySales) {
           headers = ['Date', 'Transactions', 'Revenue', 'Items Sold'];
-          rows = data.dailySales.map(item => [
+          rows = (isSalesObject ? data.dailySales : data.dailySales).map(item => [
             item.date,
             item.transactions,
             item.revenue.toFixed(2),
@@ -578,6 +587,7 @@ const ReportsScreen = () => {
               <option value="">All Methods</option>
               <option value="cash">Cash</option>
               <option value="card">Card</option>
+              <option value="gcash">GCash / E-Wallet</option>
             </select>
           </div>
 

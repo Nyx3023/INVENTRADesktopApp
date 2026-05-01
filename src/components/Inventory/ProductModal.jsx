@@ -22,6 +22,8 @@ const ProductModal = ({ product, onClose, onSave, prefilledBarcode }) => {
     price: '',
     cost: '',
     quantity: '',
+    batchNumber: '',
+    expiryDate: '',
     barcode: '',
     status: 'available'
   });
@@ -55,6 +57,8 @@ const ProductModal = ({ product, onClose, onSave, prefilledBarcode }) => {
         price: product.price || '',
         cost: product.cost || '',
         quantity: product.quantity || '',
+        batchNumber: product.batchNumber || product.batch_number || '',
+        expiryDate: product.expiryDate || product.expiry_date || '',
         barcode: product.barcode || '',
         status: product.status || 'available'
       });
@@ -76,6 +80,8 @@ const ProductModal = ({ product, onClose, onSave, prefilledBarcode }) => {
         price: '',
         cost: '',
         quantity: '',
+        batchNumber: '',
+        expiryDate: '',
         barcode: prefilledBarcode || '',
         status: 'available'
       });
@@ -337,6 +343,29 @@ const ProductModal = ({ product, onClose, onSave, prefilledBarcode }) => {
                       title={product ? "Use Stock Adjustments to modify quantity" : ""}
                     />
                     {product && <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 flex items-center gap-1">🔒 Locked. Use Stock Mode to add.</p>}
+                  </div>
+                  <div>
+                    <label className={labelClass} htmlFor="batchNumber">Batch Number</label>
+                    <input
+                      type="text"
+                      id="batchNumber"
+                      name="batchNumber"
+                      value={formData.batchNumber}
+                      onChange={handleChange}
+                      className={inputClass}
+                      placeholder="Optional batch/lot number"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass} htmlFor="expiryDate">Expiration Date</label>
+                    <input
+                      type="date"
+                      id="expiryDate"
+                      name="expiryDate"
+                      value={formData.expiryDate}
+                      onChange={handleChange}
+                      className={inputClass}
+                    />
                   </div>
                 </div>
               </div>

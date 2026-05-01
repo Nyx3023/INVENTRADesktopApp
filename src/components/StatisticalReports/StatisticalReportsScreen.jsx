@@ -24,6 +24,7 @@ import {
   CurrencyDollarIcon,
   ChartBarIcon,
   ArrowDownTrayIcon,
+  PrinterIcon,
   ArchiveBoxXMarkIcon,
   Squares2X2Icon,
   ChevronLeftIcon,
@@ -37,6 +38,7 @@ import {
   exportCategoryPerformanceToExcel,
   exportDeadStockToExcel,
   exportAbcAnalysisToExcel,
+  exportStatisticalReportPDF,
 } from '../../utils/exportUtils';
 import ModalPortal from '../common/ModalPortal';
 
@@ -418,6 +420,37 @@ const StatisticalReportsScreen = () => {
       toast.error(`Failed to export ${label}`);
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  const printStatisticalReport = () => {
+    try {
+      const formattedSummary = {
+        dailySales: salesData.daily || 0,
+        weeklySales: salesData.weekly || 0,
+        monthlySales: salesData.monthly || 0,
+        yearlySales: salesData.yearly || 0
+      };
+
+      const filename = exportUtils.exportStatisticalReportPDF(
+        {
+          summary: formattedSummary,
+          topProducts: topProducts,
+          salesByCategory: categoryDistribution,
+          salesTrend: salesTrend.map((item) => ({
+            date: item.date,
+            amount: item.amount
+          }))
+        },
+        {
+          title: 'Statistical Report',
+          dateRange: `Period: ${selectedPeriod}`
+        }
+      );
+      toast.success(`Printable report created: ${filename}`);
+    } catch (err) {
+      console.error('Failed to create printable statistical report:', err);
+      toast.error('Failed to create printable report');
     }
   };
 
@@ -978,6 +1011,15 @@ const StatisticalReportsScreen = () => {
             <ArrowDownTrayIcon className="h-4 w-4" />
             Export Sales Summary
           </button>
+          <button
+            type="button"
+            onClick={printStatisticalReport}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-sm font-medium"
+            title="Create a printable PDF report"
+          >
+            <PrinterIcon className="h-4 w-4" />
+            Print PDF
+          </button>
           <select
             className={`border rounded-lg px-3 py-2 ${colors.input.primary}`}
             value={selectedPeriod}
@@ -1417,4 +1459,3 @@ const StatisticalReportsScreen = () => {
 };
 
 export default StatisticalReportsScreen;
-

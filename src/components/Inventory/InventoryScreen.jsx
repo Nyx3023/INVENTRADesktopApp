@@ -27,12 +27,15 @@ import {
   ArrowUpIcon,
   ScaleIcon,
   ArrowDownTrayIcon,
-  ArrowUpTrayIcon
+  ArrowUpTrayIcon,
+  ArrowsUpDownIcon,
+  ShoppingBagIcon,
+  ArchiveBoxArrowDownIcon
 } from '@heroicons/react/24/outline';
 import ProductModal from './ProductModal';
 import InventoryAuditModal from './InventoryAuditModal';
 import ImportProductsModal from './ImportProductsModal';
-import { productService, categoryService, auditService, stockAdjustmentService } from '../../services/api';
+import { productService, categoryService, auditService, stockAdjustmentService, stockMovementService } from '../../services/api';
 import { exportProductsToExcel } from '../../utils/exportUtils';
 import { useAuth, usePermissions } from '../../context/AuthContext';
 import AsyncImage from '../common/AsyncImage';
@@ -60,9 +63,13 @@ const InventoryScreen = () => {
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const [selectedProductForBatch, setSelectedProductForBatch] = useState(null);
   const [isQuickStockOpen, setIsQuickStockOpen] = useState(false);
   const [quickStockType, setQuickStockType] = useState('in');
   const [quickStockQty, setQuickStockQty] = useState(1);
+  const [quickStockBatchNumber, setQuickStockBatchNumber] = useState('');
+  const [quickStockExpiryDate, setQuickStockExpiryDate] = useState('');
   const [isStockAdjustmentOpen, setIsStockAdjustmentOpen] = useState(false);
   const [adjustmentData, setAdjustmentData] = useState({
     type: 'physical_count',
@@ -275,6 +282,8 @@ const InventoryScreen = () => {
     setSelectedProduct(product);
     setQuickStockType('in');
     setQuickStockQty(1);
+    setQuickStockBatchNumber('');
+    setQuickStockExpiryDate('');
     setIsQuickStockOpen(true);
   };
 
@@ -283,42 +292,28 @@ const InventoryScreen = () => {
     const qty = Math.max(1, parseInt(quickStockQty, 10) || 0);
 
     try {
-      if (quickStockType === 'in') {
-        const currentQty = Number(selectedProduct.quantity) || 0;
-        const newQuantity = currentQty + qty;
-
-        // Let the server handle both the quantity update and adjustment log atomically
-        await stockAdjustmentService.create({
-          productId: selectedProduct.id,
-          adjustmentType: 'correction',
-          newQuantity: newQuantity,
-          reason: `Quick stock in: +${qty}`,
-          notes: 'Quick stock adjustment',
-          adjustedBy: user?.name || 'System',
-          adjustedById: user?.id,
-        });
-
-        toast.success(`Stock added: ${qty}`);
-      } else {
+      if (quickStockType === 'out') {
         const currentQty = Number(selectedProduct.quantity) || 0;
         if (currentQty < qty) {
           toast.error('Insufficient stock');
           return;
         }
-        const newQuantity = Math.max(0, currentQty - qty);
-
-        await stockAdjustmentService.create({
-          productId: selectedProduct.id,
-          adjustmentType: 'correction',
-          newQuantity: newQuantity,
-          reason: `Quick stock out: -${qty}`,
-          notes: 'Quick stock adjustment',
-          adjustedBy: user?.name || 'System',
-          adjustedById: user?.id,
-        });
-
-        toast.success(`Stock removed: ${qty}`);
       }
+
+      await stockMovementService.create({
+        productId: selectedProduct.id,
+        movementType: quickStockType === 'return' ? 'return' : quickStockType,
+        quantity: qty,
+        batchNumber: quickStockType === 'out' ? '' : quickStockBatchNumber,
+        expiryDate: quickStockType === 'out' ? '' : quickStockExpiryDate,
+        referenceNumber: `QUICK-${Date.now()}`,
+        notes: `Quick stock ${quickStockType}`,
+        performedBy: user?.name || 'System',
+        performedById: user?.id,
+      });
+
+      const actionLabel = quickStockType === 'out' ? 'removed' : quickStockType === 'return' ? 'returned' : 'added';
+      toast.success(`Stock ${actionLabel}: ${qty}`);
 
       setIsQuickStockOpen(false);
       setSelectedProduct(null);
@@ -580,6 +575,8 @@ const InventoryScreen = () => {
             quantity: product.quantity,
             lowStockThreshold: product.lowStockThreshold ?? product.low_stock_threshold ?? 0,
             reorderPoint: product.reorderPoint ?? product.lowStockThreshold ?? product.low_stock_threshold ?? 15,
+            batchNumber: product.batchNumber || product.batch_number || '',
+            expiryDate: product.expiryDate || product.expiry_date || '',
             barcode: product.barcode || null,
             imageUrl: product.imageUrl || product.image_url || null,
           };
@@ -646,7 +643,8 @@ const InventoryScreen = () => {
   const filteredProducts = safeProducts.filter(product => {
     // Search filter
     if (debouncedSearch && !product.name.toLowerCase().includes(debouncedSearch.toLowerCase()) &&
-      !product.barcode?.toLowerCase().includes(debouncedSearch.toLowerCase())) {
+      !product.barcode?.toLowerCase().includes(debouncedSearch.toLowerCase()) &&
+      !product.batchNumber?.toLowerCase().includes(debouncedSearch.toLowerCase())) {
       return false;
     }
 
@@ -951,6 +949,13 @@ const InventoryScreen = () => {
             </div>
           </div>
 
+          {(product.batchNumber || product.expiryDate) && (
+            <div className={`mb-4 p-3 rounded-lg ${colors.bg.secondary} text-xs ${colors.text.secondary} space-y-1`}>
+              {product.batchNumber && <p>Batch: <span className={colors.text.primary}>{product.batchNumber}</span></p>}
+              {product.expiryDate && <p>Expires: <span className={colors.text.primary}>{new Date(product.expiryDate).toLocaleDateString()}</span></p>}
+            </div>
+          )}
+
           {/* Barcode - Always takes up space for consistency */}
           <div className={`mb-4 p-3 rounded-lg min-h-[3.25rem] flex flex-col justify-center ${product.barcode ? colors.bg.secondary : 'transparent'
             }`}>
@@ -978,6 +983,17 @@ const InventoryScreen = () => {
                 <ScaleIcon className="h-5 w-5 inline mr-1" /> Adjust
               </button>
             )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedProductForBatch(product);
+                setShowBatchModal(true);
+              }}
+              className={`p-2.5 bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 rounded-lg hover:bg-emerald-200 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center ${hasPermission('delete_product') ? '' : 'col-span-2'}`}
+              title="View Batches"
+            >
+              <ClipboardDocumentListIcon className="h-5 w-5 inline mr-1" /> Batches
+            </button>
             {hasPermission('edit_product') && (
               <button
                 onClick={(e) => {
@@ -1034,6 +1050,12 @@ const InventoryScreen = () => {
               </th>
               <th className={`px-6 py-4 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>
                 Stock
+              </th>
+              <th className={`px-6 py-4 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>
+                Batch
+              </th>
+              <th className={`px-6 py-4 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>
+                Expiration
               </th>
               <th className={`px-6 py-4 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>
                 Status
@@ -1099,6 +1121,12 @@ const InventoryScreen = () => {
                       )}
                     </span>
                   </td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm ${colors.text.secondary}`}>
+                    {product.batchNumber || 'N/A'}
+                  </td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm ${colors.text.secondary}`}>
+                    {product.expiryDate ? new Date(product.expiryDate).toLocaleDateString() : 'N/A'}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`px-2 py-1 text-xs font-medium rounded-full ${stockInfo.bg} ${stockInfo.color}`}>
                       {stockInfo.status}
@@ -1115,6 +1143,16 @@ const InventoryScreen = () => {
                           <ScaleIcon className="h-4 w-4" />
                         </button>
                       )}
+                      <button
+                        onClick={() => {
+                          setSelectedProductForBatch(product);
+                          setShowBatchModal(true);
+                        }}
+                        className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-900 dark:hover:text-emerald-300 transition-colors p-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/20"
+                        title="View Batches"
+                      >
+                        <ClipboardDocumentListIcon className="h-4 w-4" />
+                      </button>
                       {hasPermission('edit_product') && (
                         <button
                           onClick={() => {
@@ -1589,14 +1627,38 @@ const InventoryScreen = () => {
               </button>
             </div>
             <div className="px-5 py-5 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <button onClick={() => setQuickStockType('in')} className={`px-3 py-2 rounded-lg border text-sm font-medium ${quickStockType === 'in' ? 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : colors.input.primary}`}>Stock In</button>
                 <button onClick={() => setQuickStockType('out')} className={`px-3 py-2 rounded-lg border text-sm font-medium ${quickStockType === 'out' ? 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300' : colors.input.primary}`}>Stock Out</button>
+                <button onClick={() => setQuickStockType('return')} className={`px-3 py-2 rounded-lg border text-sm font-medium ${quickStockType === 'return' ? 'bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : colors.input.primary}`}>Return</button>
               </div>
               <div>
                 <label className={`block text-sm font-medium mb-1 ${colors.text.primary}`}>Quantity</label>
                 <input type="number" min="1" value={quickStockQty} onChange={(e) => setQuickStockQty(e.target.value)} className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`} />
               </div>
+              {quickStockType !== 'out' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className={`block text-sm font-medium mb-1 ${colors.text.primary}`}>Batch Number</label>
+                    <input
+                      type="text"
+                      value={quickStockBatchNumber}
+                      onChange={(e) => setQuickStockBatchNumber(e.target.value)}
+                      className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-medium mb-1 ${colors.text.primary}`}>Expiration Date</label>
+                    <input
+                      type="date"
+                      value={quickStockExpiryDate}
+                      onChange={(e) => setQuickStockExpiryDate(e.target.value)}
+                      className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="flex justify-end gap-2 pt-2">
                 <button onClick={() => setIsQuickStockOpen(false)} className={`px-4 py-2 rounded-lg ${colors.bg.tertiary} ${colors.text.secondary} hover:${colors.text.primary}`}>Cancel</button>
                 <button onClick={submitQuickStock} className={`px-4 py-2 rounded-lg bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-600`}>Apply</button>
@@ -1604,6 +1666,27 @@ const InventoryScreen = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Batch Modal stub since we only use it if we want to show a popup version */}
+      {showBatchModal && selectedProductForBatch && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className={`w-full max-w-4xl max-h-[90vh] flex flex-col ${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} overflow-hidden`}>
+              <div className={`flex items-center justify-between px-6 py-4 border-b ${colors.border.primary} bg-slate-50/50 dark:bg-slate-800/20`}>
+                <h2 className={`text-xl font-bold ${colors.text.primary}`}>Batches for {selectedProductForBatch.name}</h2>
+                <button onClick={() => setShowBatchModal(false)} className={`p-2 rounded-xl transition-colors hover:bg-slate-200 dark:hover:bg-slate-700`}>
+                  <XMarkIcon className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="overflow-y-auto p-6">
+                 {/* To keep it simple without circular dependencies, the user can navigate to the full batches page, or we just instruct them */}
+                 <p className="mb-4">For detailed batch management, please use the <strong>Batches</strong> tab at the top of the inventory page.</p>
+                 <button onClick={() => setShowBatchModal(false)} className="px-4 py-2 bg-blue-600 text-white rounded-lg">Close</button>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
       )}
 
       {/* Stock Adjustment Modal */}

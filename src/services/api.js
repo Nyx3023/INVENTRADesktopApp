@@ -583,7 +583,21 @@ export const activityLogService = {
   },
 };
 
-// inventoryBatchService removed - FIFO system no longer used
+export const inventoryBatchService = {
+  getAll: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('inventoryBatches', 'list', params);
+    }
+    return fetchJson(`${API_URL}/inventory-batches${toQueryString(params)}`);
+  },
+
+  getByProduct: async (productId) => {
+    if (hasNativeBridge) {
+      return nativeCall('inventoryBatches', 'list', { productId });
+    }
+    return fetchJson(`${API_URL}/inventory-batches?productId=${productId}`);
+  }
+};
 
 export const stockAdjustmentService = {
   create: async (adjustmentData) => {

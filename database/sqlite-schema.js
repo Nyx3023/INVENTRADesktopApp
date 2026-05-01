@@ -45,6 +45,8 @@ export async function initializeDatabase() {
         price REAL NOT NULL DEFAULT 0.00,
         cost REAL NOT NULL DEFAULT 0.00,
         quantity INTEGER NOT NULL DEFAULT 0,
+        batch_number TEXT,
+        expiry_date DATETIME,
         low_stock_threshold INTEGER NOT NULL DEFAULT 10,
         reorder_point INTEGER NOT NULL DEFAULT 15,
         barcode TEXT,
@@ -173,6 +175,21 @@ export async function initializeDatabase() {
       }
     }
 
+    const productCompatibilityColumns = [
+      { name: 'batch_number', sql: `ALTER TABLE products ADD COLUMN batch_number TEXT;` },
+      { name: 'expiry_date', sql: `ALTER TABLE products ADD COLUMN expiry_date DATETIME;` },
+    ];
+    for (const col of productCompatibilityColumns) {
+      try {
+        db.exec(col.sql);
+        console.log(`Added ${col.name} column to products table`);
+      } catch (e) {
+        if (!e.message.includes('duplicate column name')) {
+          console.error(`Error adding ${col.name} column:`, e);
+        }
+      }
+    }
+
     // Ensure discount columns exist in transactions table
     const discountColumns = [
       { name: 'discount_type', sql: `ALTER TABLE transactions ADD COLUMN discount_type TEXT;` },
@@ -231,8 +248,10 @@ export async function initializeDatabase() {
         id TEXT PRIMARY KEY,
         product_id TEXT NOT NULL,
         product_name TEXT NOT NULL,
-        movement_type TEXT NOT NULL CHECK(movement_type IN ('transfer', 'return', 'damage', 'write_off', 'other')),
+        movement_type TEXT NOT NULL CHECK(movement_type IN ('in', 'out', 'stock_in', 'stock_out', 'transfer', 'return', 'damage', 'write_off', 'sale', 'adjustment', 'other')),
         quantity INTEGER NOT NULL,
+        batch_number TEXT,
+        expiry_date DATETIME,
         from_location TEXT,
         to_location TEXT,
         reference_number TEXT,
@@ -243,6 +262,76 @@ export async function initializeDatabase() {
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
       )
     `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS inventory_batches (
+        id TEXT PRIMARY KEY,
+        product_id TEXT NOT NULL,
+        batch_number TEXT,
+        quantity INTEGER NOT NULL DEFAULT 0,
+        initial_quantity INTEGER NOT NULL DEFAULT 0,
+        unit_cost REAL NOT NULL DEFAULT 0.00,
+        expiry_date DATETIME,
+        received_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        source_type TEXT,
+        source_id TEXT,
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'depleted')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      )
+    `);
+
+    const stockMovementCompatibilityColumns = [
+      { name: 'batch_number', sql: `ALTER TABLE stock_movements ADD COLUMN batch_number TEXT;` },
+      { name: 'expiry_date', sql: `ALTER TABLE stock_movements ADD COLUMN expiry_date DATETIME;` },
+    ];
+    for (const col of stockMovementCompatibilityColumns) {
+      try {
+        db.exec(col.sql);
+        console.log(`Added ${col.name} column to stock_movements table`);
+      } catch (e) {
+        if (!e.message.includes('duplicate column name')) {
+          console.error(`Error adding ${col.name} column to stock_movements:`, e);
+        }
+      }
+    }
+
+    const movementTable = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='stock_movements'").get();
+    if (movementTable?.sql && !movementTable.sql.includes("'stock_in'")) {
+      db.exec(`
+        PRAGMA foreign_keys = OFF;
+        ALTER TABLE stock_movements RENAME TO stock_movements_old;
+        CREATE TABLE stock_movements (
+          id TEXT PRIMARY KEY,
+          product_id TEXT NOT NULL,
+          product_name TEXT NOT NULL,
+          movement_type TEXT NOT NULL CHECK(movement_type IN ('in', 'out', 'stock_in', 'stock_out', 'transfer', 'return', 'damage', 'write_off', 'sale', 'adjustment', 'other')),
+          quantity INTEGER NOT NULL,
+          batch_number TEXT,
+          expiry_date DATETIME,
+          from_location TEXT,
+          to_location TEXT,
+          reference_number TEXT,
+          notes TEXT,
+          performed_by TEXT,
+          performed_by_id TEXT,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+        );
+        INSERT INTO stock_movements (
+          id, product_id, product_name, movement_type, quantity, batch_number, expiry_date,
+          from_location, to_location, reference_number, notes, performed_by, performed_by_id, created_at
+        )
+        SELECT
+          id, product_id, product_name, movement_type, quantity, NULL, NULL,
+          from_location, to_location, reference_number, notes, performed_by, performed_by_id, created_at
+        FROM stock_movements_old;
+        DROP TABLE stock_movements_old;
+        PRAGMA foreign_keys = ON;
+      `);
+      console.log('Rebuilt stock_movements table to support stock in/out movement types');
+    }
 
     // Create outbox table
     db.exec(`
@@ -300,6 +389,9 @@ export async function initializeDatabase() {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_stock_adjustments_date ON stock_adjustments(created_at)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_stock_movements_date ON stock_movements(created_at)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_batches_product_fifo ON inventory_batches(product_id, received_date, id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_batches_expiry ON inventory_batches(expiry_date)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_batches_status ON inventory_batches(status)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox(status, created_at)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_activity_logs_action ON activity_logs(action)`);

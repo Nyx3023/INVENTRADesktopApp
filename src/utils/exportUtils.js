@@ -767,6 +767,8 @@ export const exportProductsToExcel = (products, filename = `Products_Export_${ne
     'Selling Price',
     'Cost Price',
     'Quantity',
+    'Batch Number',
+    'Expiration Date',
     'Barcode',
     'ProductImage',
     'Status'
@@ -782,6 +784,8 @@ export const exportProductsToExcel = (products, filename = `Products_Export_${ne
       Number(product.price || 0).toFixed(2),
       Number(product.cost || 0).toFixed(2),
       Number(product.quantity || 0),
+      product.batchNumber || product.batch_number || '',
+      product.expiryDate || product.expiry_date || '',
       product.barcode || '',
       product.image_url || product.imageUrl || '',
       product.status || 'available'
@@ -799,6 +803,8 @@ export const exportProductsToExcel = (products, filename = `Products_Export_${ne
     { wch: 15 }, // Selling Price
     { wch: 15 }, // Cost Price
     { wch: 12 }, // Quantity
+    { wch: 18 }, // Batch Number
+    { wch: 18 }, // Expiration Date
     { wch: 20 }, // Barcode
     { wch: 40 }, // ProductImage
     { wch: 15 }  // Status
@@ -816,6 +822,8 @@ export const exportProductsToExcel = (products, filename = `Products_Export_${ne
     ['Selling Price', 'Product selling price in decimal format (required)'],
     ['Cost Price', 'Product cost price in decimal format (optional)'],
     ['Quantity', 'Initial stock quantity (required)'],
+    ['Batch Number', 'Batch/lot number (optional)'],
+    ['Expiration Date', 'Expiration date (optional; YYYY-MM-DD recommended)'],
     ['Barcode', 'Product barcode (optional)'],
     ['ProductImage', 'Image URL or path (optional)'],
     ['Status', 'Availability status: available or unavailable (optional, defaults to available)'],
@@ -980,6 +988,8 @@ export const importProductsFromExcel = async (file, existingProducts = []) => {
           sellingPrice: -1,
           costPrice: -1,
           quantity: -1,
+          batchNumber: -1,
+          expiryDate: -1,
           barcode: -1,
           productImage: -1,
           status: -1
@@ -1001,6 +1011,10 @@ export const importProductsFromExcel = async (file, existingProducts = []) => {
             columnMap.costPrice = index;
           } else if (headerTrimmed === 'Quantity' || headerLower === 'quantity') {
             columnMap.quantity = index;
+          } else if (headerTrimmed === 'Batch Number' || headerLower === 'batch number' || headerLower === 'batchnumber') {
+            columnMap.batchNumber = index;
+          } else if (headerTrimmed === 'Expiration Date' || headerLower === 'expiration date' || headerLower === 'expiry date' || headerLower === 'expirydate') {
+            columnMap.expiryDate = index;
           } else if (headerTrimmed === 'Barcode' || headerLower === 'barcode') {
             columnMap.barcode = index;
           } else if (headerTrimmed === 'ProductImage' || headerLower === 'productimage') {
@@ -1019,6 +1033,10 @@ export const importProductsFromExcel = async (file, existingProducts = []) => {
             columnMap.costPrice = index;
           } else if (columnMap.quantity === -1 && (headerLower.includes('quantity') || (headerLower.includes('stock') && !headerLower.includes('low')))) {
             columnMap.quantity = index;
+          } else if (columnMap.batchNumber === -1 && (headerLower.includes('batch') || headerLower.includes('lot'))) {
+            columnMap.batchNumber = index;
+          } else if (columnMap.expiryDate === -1 && (headerLower.includes('expiry') || headerLower.includes('expiration'))) {
+            columnMap.expiryDate = index;
           } else if (columnMap.barcode === -1 && headerLower.includes('barcode')) {
             columnMap.barcode = index;
           } else if (columnMap.productImage === -1 && headerLower.includes('image')) {
@@ -1074,6 +1092,8 @@ export const importProductsFromExcel = async (file, existingProducts = []) => {
           const sellingPrice = String(row[columnMap.sellingPrice] || '').trim();
           const costPrice = columnMap.costPrice !== -1 ? String(row[columnMap.costPrice] || '').trim() : '';
           const quantity = String(row[columnMap.quantity] || '').trim();
+          const batchNumber = columnMap.batchNumber !== -1 ? String(row[columnMap.batchNumber] || '').trim() : '';
+          const expiryDate = columnMap.expiryDate !== -1 ? String(row[columnMap.expiryDate] || '').trim() : '';
           const barcode = columnMap.barcode !== -1 ? String(row[columnMap.barcode] || '').trim() : '';
           const productImage = columnMap.productImage !== -1 ? String(row[columnMap.productImage] || '').trim() : '';
           const statusRaw = columnMap.status !== -1 ? String(row[columnMap.status] || '').trim().toLowerCase() : 'available';
@@ -1181,6 +1201,8 @@ export const importProductsFromExcel = async (file, existingProducts = []) => {
             price: priceNum,
             cost: costPrice ? costNum : 0,
             quantity: qtyNum,
+            batchNumber: batchNumber || '',
+            expiryDate: expiryDate || '',
             barcode: barcode || null,
             image_url: productImage || null,
             status: statusValue,
@@ -1232,6 +1254,8 @@ export const downloadImportTemplate = (filename = 'Import_Products_Template.xlsx
     'Selling Price',
     'Cost Price',
     'Quantity',
+    'Batch Number',
+    'Expiration Date',
     'Barcode',
     'ProductImage',
     'Status'
@@ -1244,6 +1268,8 @@ export const downloadImportTemplate = (filename = 'Import_Products_Template.xlsx
     { wch: 15 }, // Selling Price
     { wch: 15 }, // Cost Price
     { wch: 12 }, // Quantity
+    { wch: 18 }, // Batch Number
+    { wch: 18 }, // Expiration Date
     { wch: 20 }, // Barcode
     { wch: 40 }, // ProductImage
     { wch: 15 }  // Status
@@ -1260,6 +1286,8 @@ export const downloadImportTemplate = (filename = 'Import_Products_Template.xlsx
     ['Selling Price', 'Product selling price in decimal format (required)'],
     ['Cost Price', 'Product cost price in decimal format (optional)'],
     ['Quantity', 'Initial stock quantity (required)'],
+    ['Batch Number', 'Batch/lot number (optional)'],
+    ['Expiration Date', 'Expiration date (optional; YYYY-MM-DD recommended)'],
     ['Barcode', 'Product barcode (optional)'],
     ['ProductImage', 'Image URL or path (optional)'],
     ['Status', 'Availability status: available or unavailable (optional, defaults to available)'],

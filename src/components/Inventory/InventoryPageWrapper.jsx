@@ -14,6 +14,7 @@ const ProductsTab = lazy(() => import('./InventoryScreen'));
 const AuditsTab = lazy(() => import('../Audits/AuditsScreen'));
 const SuppliersTab = lazy(() => import('./SuppliersScreen'));
 const StockAdjustmentsTab = lazy(() => import('./StockAdjustmentsScreen'));
+const BatchManagementTab = lazy(() => import('./BatchManagementScreen'));
 
 const LoadingSpinner = () => (
   <LazyPageLoader
@@ -32,6 +33,7 @@ const InventoryPageWrapper = () => {
 
   const tabs = [
     { id: 'products', name: 'Products', icon: CubeIcon, permission: 'view_inventory' },
+    { id: 'batches', name: 'Batches', icon: ClipboardDocumentListIcon, permission: 'view_inventory' },
     { id: 'adjustments', name: 'Stock Adjustments', icon: ScaleIcon, permission: 'adjust_stock' },
     { id: 'audits', name: 'Audits', icon: ClipboardDocumentListIcon, permission: 'perform_audits' },
     { id: 'suppliers', name: 'Suppliers', icon: TruckIcon, permission: 'manage_suppliers' },
@@ -43,6 +45,8 @@ const InventoryPageWrapper = () => {
     switch (activeTab) {
       case 'products':
         return hasPermission('view_inventory') ? <ProductsTab /> : null;
+      case 'batches':
+        return hasPermission('view_inventory') ? <BatchManagementTab /> : null;
       case 'adjustments':
         return hasPermission('adjust_stock') ? <StockAdjustmentsTab /> : null;
       case 'audits':

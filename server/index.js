@@ -151,6 +151,106 @@ function logActivity({
   }
 }
 
+const normalizeOptionalText = (value) => {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  return trimmed === '' ? null : trimmed;
+};
+
+const normalizeOptionalDate = (value) => {
+  const text = normalizeOptionalText(value);
+  if (!text) return null;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? text : date.toISOString().slice(0, 10);
+};
+
+const isStockInMovement = (type) => ['in', 'stock_in', 'return'].includes(String(type || '').toLowerCase());
+const isStockOutMovement = (type) => ['out', 'stock_out', 'damage', 'write_off', 'sale'].includes(String(type || '').toLowerCase());
+
+function addInventoryBatch(connection, {
+  productId,
+  quantity,
+  batchNumber = null,
+  expiryDate = null,
+  unitCost = 0,
+  sourceType = null,
+  sourceId = null,
+}) {
+  const qty = Math.max(0, Number.parseInt(quantity, 10) || 0);
+  if (!productId || qty <= 0) return null;
+
+  const batchId = uuidv4();
+  connection.execute(
+    `INSERT INTO inventory_batches (
+      id, product_id, batch_number, quantity, initial_quantity,
+      unit_cost, expiry_date, source_type, source_id, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+    [
+      batchId,
+      productId,
+      normalizeOptionalText(batchNumber),
+      qty,
+      qty,
+      Number(unitCost) || 0,
+      normalizeOptionalDate(expiryDate),
+      normalizeOptionalText(sourceType),
+      normalizeOptionalText(sourceId),
+    ]
+  );
+  return batchId;
+}
+
+function deductInventoryBatches(connection, { productId, quantity }) {
+  let remaining = Math.max(0, Number.parseInt(quantity, 10) || 0);
+  if (!productId || remaining <= 0) return [];
+
+  const [batches] = connection.execute(
+    `SELECT id, batch_number, quantity, expiry_date
+     FROM inventory_batches
+     WHERE product_id = ? AND quantity > 0 AND status = 'active'
+     ORDER BY
+       CASE WHEN expiry_date IS NULL OR expiry_date = '' THEN 1 ELSE 0 END,
+       expiry_date ASC,
+       received_date ASC,
+       id ASC`,
+    [productId]
+  );
+
+  const deductions = [];
+  for (const batch of batches || []) {
+    if (remaining <= 0) break;
+    const available = Number(batch.quantity) || 0;
+    const used = Math.min(available, remaining);
+    const newQty = available - used;
+
+    connection.execute(
+      `UPDATE inventory_batches
+       SET quantity = ?, status = CASE WHEN ? <= 0 THEN 'depleted' ELSE 'active' END, updated_at = datetime('now')
+       WHERE id = ?`,
+      [newQty, newQty, batch.id]
+    );
+
+    deductions.push({
+      batchId: batch.id,
+      batchNumber: batch.batch_number,
+      expiryDate: batch.expiry_date,
+      quantity: used,
+    });
+    remaining -= used;
+  }
+
+  if (remaining > 0) {
+    deductions.push({
+      batchId: null,
+      batchNumber: 'Legacy stock',
+      expiryDate: null,
+      quantity: remaining,
+    });
+  }
+
+  return deductions;
+}
+
 // Cleanup archived transactions older than 60 days
 async function cleanupOldArchivedTransactions() {
   try {
@@ -754,7 +854,7 @@ app.get('/api/products', async (req, res) => {
   try {
     const [rows] = execute(
       'SELECT id, name, description, category_name, price, cost, ' +
-      'quantity, barcode, image_url as imageUrl, status ' +
+      'quantity, batch_number as batchNumber, expiry_date as expiryDate, barcode, image_url as imageUrl, status ' +
       'FROM products WHERE deleted_at IS NULL'
     );
     console.log('Products fetched:', rows);
@@ -770,7 +870,7 @@ app.get('/api/products/archived', async (req, res) => {
   try {
     const [rows] = execute(
       'SELECT id, name, description, category_name, price, cost, ' +
-      'quantity, barcode, image_url as imageUrl, status, deleted_at ' +
+      'quantity, batch_number as batchNumber, expiry_date as expiryDate, barcode, image_url as imageUrl, status, deleted_at ' +
       'FROM products WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC'
     );
     console.log('Archived products fetched:', rows.length);
@@ -819,6 +919,53 @@ app.get('/api/products/inventory-valuation', async (req, res) => {
   }
 });
 
+// Get all inventory batches
+app.get('/api/inventory-batches', async (req, res) => {
+  try {
+    const { productId } = req.query;
+    
+    let query = `
+      SELECT 
+        ib.id, ib.product_id, ib.batch_number, ib.quantity, ib.unit_cost, 
+        ib.expiry_date, ib.status, ib.created_at, ib.updated_at,
+        p.name as product_name, p.category_name
+      FROM inventory_batches ib
+      JOIN products p ON ib.product_id = p.id
+      WHERE p.deleted_at IS NULL
+    `;
+    const params = [];
+
+    if (productId) {
+      query += ` AND ib.product_id = ?`;
+      params.push(productId);
+    }
+
+    query += ` ORDER BY ib.created_at DESC`;
+
+    const [rows] = execute(query, params);
+    
+    // Map snake_case to camelCase for frontend
+    const mappedRows = rows.map(row => ({
+      id: row.id,
+      productId: row.product_id,
+      productName: row.product_name,
+      categoryName: row.category_name,
+      batchNumber: row.batch_number,
+      quantity: row.quantity,
+      unitCost: row.unit_cost,
+      expiryDate: row.expiry_date,
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+
+    res.json(mappedRows);
+  } catch (error) {
+    console.error('Error fetching inventory batches:', error);
+    res.status(500).json({ error: 'Failed to fetch inventory batches' });
+  }
+});
+
 // Create a product
 app.post('/api/products', async (req, res) => {
   try {
@@ -847,25 +994,45 @@ app.post('/api/products', async (req, res) => {
     // Validate and handle category - create if it doesn't exist
     const categoryName = ensureCategoryExists(product.category);
 
-    execute(
-      `INSERT INTO products (
-        id, name, description, category_name, 
-        price, cost, quantity,
-        barcode, image_url, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        product.name,
-        product.description,
-        categoryName, // Use validated/created category
-        product.price,
-        product.cost || 0,
-        product.quantity,
-        barcodeValue,
-        product.imageUrl,
-        product.status || 'available'
-      ]
-    );
+    const initialQuantity = Math.max(0, Number.parseInt(product.quantity, 10) || 0);
+    const batchNumber = normalizeOptionalText(product.batchNumber ?? product.batch_number);
+    const expiryDate = normalizeOptionalDate(product.expiryDate ?? product.expiry_date);
+
+    await withTransaction(async (connection) => {
+      connection.execute(
+        `INSERT INTO products (
+          id, name, description, category_name, 
+          price, cost, quantity, batch_number, expiry_date,
+          barcode, image_url, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          product.name,
+          product.description,
+          categoryName, // Use validated/created category
+          product.price,
+          product.cost || 0,
+          initialQuantity,
+          batchNumber,
+          expiryDate,
+          barcodeValue,
+          product.imageUrl,
+          product.status || 'available'
+        ]
+      );
+
+      if (initialQuantity > 0) {
+        addInventoryBatch(connection, {
+          productId: id,
+          quantity: initialQuantity,
+          batchNumber,
+          expiryDate,
+          unitCost: product.cost || 0,
+          sourceType: 'initial_stock',
+          sourceId: id,
+        });
+      }
+    });
 
     console.log('Product created with ID:', id);
     // Enqueue outbox for sync
@@ -894,7 +1061,7 @@ app.post('/api/products', async (req, res) => {
       console.warn('Failed to log activity for product creation:', logError);
     }
 
-    res.status(201).json({ id, ...product });
+    res.status(201).json({ id, ...product, quantity: initialQuantity, batchNumber, expiryDate });
   } catch (error) {
     console.error('Error creating product:', error);
     res.status(500).json({ error: 'Failed to create product', details: error.message });
@@ -970,6 +1137,8 @@ app.put('/api/products/:id', async (req, res) => {
       price: product.price || 0,
       cost: product.cost || 0,
       quantity: product.quantity || 0,
+      batch_number: normalizeOptionalText(product.batchNumber ?? product.batch_number),
+      expiry_date: normalizeOptionalDate(product.expiryDate ?? product.expiry_date),
       barcode: barcodeToCheck,
       image_url: product.imageUrl || product.image_url || null,
       status: product.status || 'available'
@@ -985,6 +1154,8 @@ app.put('/api/products/:id', async (req, res) => {
         price = ?,
         cost = ?,
         quantity = ?,
+        batch_number = ?,
+        expiry_date = ?,
         barcode = ?,
         image_url = ?,
         status = ?
@@ -996,6 +1167,8 @@ app.put('/api/products/:id', async (req, res) => {
         updateData.price,
         updateData.cost,
         updateData.quantity,
+        updateData.batch_number,
+        updateData.expiry_date,
         updateData.barcode,
         updateData.image_url,
         updateData.status,
@@ -1050,7 +1223,7 @@ app.get('/api/products/:id', async (req, res) => {
 
     const [rows] = execute(
       'SELECT id, name, description, category_name, price, cost, ' +
-      'quantity, ' +
+      'quantity, batch_number as batchNumber, expiry_date as expiryDate, ' +
       'barcode, image_url as imageUrl ' +
       'FROM products WHERE id = ? AND deleted_at IS NULL',
       [id]
@@ -1701,42 +1874,81 @@ app.delete('/api/users/:id', async (req, res) => {
 // Create a stock movement
 app.post('/api/stock-movements', async (req, res) => {
   try {
-    const { productId, movementType, quantity, fromLocation, toLocation, referenceNumber, notes, performedBy, performedById } = req.body;
+    const { productId, movementType, quantity, batchNumber, expiryDate, fromLocation, toLocation, referenceNumber, notes, performedBy, performedById } = req.body;
 
     if (!productId || !quantity || quantity <= 0) {
       return res.status(400).json({ error: 'Product ID and positive quantity are required' });
     }
 
-    // Get product name (exclude deleted products)
-    const [[product]] = execute('SELECT name FROM products WHERE id = ? AND deleted_at IS NULL', [productId]);
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found or deleted' });
-    }
+    const normalizedMovementType = movementType || 'transfer';
+    const movementQty = Math.max(1, Number.parseInt(quantity, 10) || 1);
+    const normalizedBatchNumber = normalizeOptionalText(batchNumber);
+    const normalizedExpiryDate = normalizeOptionalDate(expiryDate);
 
-    const movementId = uuidv4();
-    execute(
-      `INSERT INTO stock_movements (
-        id, product_id, product_name, movement_type, quantity,
-        from_location, to_location, reference_number, notes,
-        performed_by, performed_by_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        movementId,
-        productId,
-        product.name,
-        movementType || 'transfer',
-        quantity,
-        fromLocation || null,
-        toLocation || null,
-        referenceNumber || null,
-        notes || null,
-        performedBy || null,
-        performedById || null,
-      ]
-    );
+    const result = await withTransaction(async (connection) => {
+      // Get product name (exclude deleted products)
+      const [[product]] = connection.execute('SELECT id, name, quantity, cost FROM products WHERE id = ? AND deleted_at IS NULL', [productId]);
+      if (!product) {
+        const error = new Error('PRODUCT_NOT_FOUND');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      if (isStockInMovement(normalizedMovementType)) {
+        addInventoryBatch(connection, {
+          productId,
+          quantity: movementQty,
+          batchNumber: normalizedBatchNumber,
+          expiryDate: normalizedExpiryDate,
+          unitCost: product.cost || 0,
+          sourceType: normalizedMovementType,
+          sourceId: referenceNumber || null,
+        });
+        connection.execute(
+          'UPDATE products SET quantity = quantity + ?, batch_number = COALESCE(?, batch_number), expiry_date = COALESCE(?, expiry_date) WHERE id = ?',
+          [movementQty, normalizedBatchNumber, normalizedExpiryDate, productId]
+        );
+      } else if (isStockOutMovement(normalizedMovementType)) {
+        const currentQty = Number(product.quantity) || 0;
+        if (currentQty < movementQty) {
+          throw new Error('INSUFFICIENT_STOCK');
+        }
+        deductInventoryBatches(connection, { productId, quantity: movementQty });
+        connection.execute(
+          'UPDATE products SET quantity = quantity - ? WHERE id = ?',
+          [movementQty, productId]
+        );
+      }
+
+      const movementId = uuidv4();
+      connection.execute(
+        `INSERT INTO stock_movements (
+          id, product_id, product_name, movement_type, quantity,
+          batch_number, expiry_date, from_location, to_location,
+          reference_number, notes, performed_by, performed_by_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          movementId,
+          productId,
+          product.name,
+          normalizedMovementType,
+          movementQty,
+          normalizedBatchNumber,
+          normalizedExpiryDate,
+          fromLocation || null,
+          toLocation || null,
+          referenceNumber || null,
+          notes || null,
+          performedBy || null,
+          performedById || null,
+        ]
+      );
+
+      return { movementId, product };
+    });
 
     // Log activity - determine action based on movement type
-    const stockAction = (movementType === 'in' || movementType === 'stock_in') ? 'STOCK_IN' : 'STOCK_OUT';
+    const stockAction = isStockInMovement(normalizedMovementType) ? 'STOCK_IN' : 'STOCK_OUT';
     logActivity({
       userId: performedById,
       userName: performedBy,
@@ -1744,9 +1956,11 @@ app.post('/api/stock-movements', async (req, res) => {
       entityType: 'product',
       entityId: productId,
       details: {
-        productName: product.name,
-        movementType,
-        quantity,
+        productName: result.product.name,
+        movementType: normalizedMovementType,
+        quantity: movementQty,
+        batchNumber: normalizedBatchNumber,
+        expiryDate: normalizedExpiryDate,
         fromLocation,
         toLocation,
         referenceNumber,
@@ -1754,9 +1968,15 @@ app.post('/api/stock-movements', async (req, res) => {
       ipAddress: req.ip,
     });
 
-    res.status(201).json({ id: movementId, message: 'Stock movement recorded successfully' });
+    res.status(201).json({ id: result.movementId, message: 'Stock movement recorded successfully' });
   } catch (error) {
     console.error('Error creating stock movement:', error);
+    if (error.statusCode === 404 || error.message === 'PRODUCT_NOT_FOUND') {
+      return res.status(404).json({ error: 'Product not found or deleted' });
+    }
+    if (error.message === 'INSUFFICIENT_STOCK' || error.message === 'INSUFFICIENT_BATCH_STOCK') {
+      return res.status(400).json({ error: 'Insufficient stock for this movement' });
+    }
     res.status(500).json({ error: 'Failed to create stock movement', details: error.message });
   }
 });
@@ -1871,7 +2091,7 @@ app.get('/api/products/reorder-suggestions', async (req, res) => {
 // Create a stock adjustment
 app.post('/api/stock-adjustments', async (req, res) => {
   try {
-    const { productId, adjustmentType, newQuantity, reason, notes, adjustedBy, adjustedById } = req.body;
+    const { productId, adjustmentType, newQuantity, reason, notes, adjustedBy, adjustedById, batchNumber, expiryDate } = req.body;
 
     if (!productId || newQuantity === undefined || newQuantity === null) {
       return res.status(400).json({ error: 'Product ID and new quantity are required' });
@@ -1883,7 +2103,7 @@ app.post('/api/stock-adjustments', async (req, res) => {
 
       // Get current product (exclude deleted products)
       const [[product]] = connection.execute(
-        'SELECT id, name, quantity FROM products WHERE id = ? AND deleted_at IS NULL',
+        'SELECT id, name, quantity, cost FROM products WHERE id = ? AND deleted_at IS NULL',
         [productId]
       );
 
@@ -1895,6 +2115,8 @@ app.post('/api/stock-adjustments', async (req, res) => {
       const quantityBefore = Number(product.quantity) || 0;
       const quantityAfter = Number(newQuantity);
       const quantityChange = quantityAfter - quantityBefore;
+      const normalizedBatchNumber = normalizeOptionalText(batchNumber);
+      const normalizedExpiryDate = normalizeOptionalDate(expiryDate);
 
       // Create adjustment record
       const adjustmentId = uuidv4();
@@ -1920,9 +2142,23 @@ app.post('/api/stock-adjustments', async (req, res) => {
       );
 
       // Update product quantity
+      if (quantityChange > 0) {
+        addInventoryBatch(connection, {
+          productId,
+          quantity: quantityChange,
+          batchNumber: normalizedBatchNumber,
+          expiryDate: normalizedExpiryDate,
+          unitCost: product.cost || 0,
+          sourceType: adjustmentType || 'correction',
+          sourceId: adjustmentId,
+        });
+      } else if (quantityChange < 0) {
+        deductInventoryBatches(connection, { productId, quantity: Math.abs(quantityChange) });
+      }
+
       connection.execute(
-        'UPDATE products SET quantity = ? WHERE id = ?',
-        [quantityAfter, productId]
+        'UPDATE products SET quantity = ?, batch_number = COALESCE(?, batch_number), expiry_date = COALESCE(?, expiry_date) WHERE id = ?',
+        [quantityAfter, normalizedBatchNumber, normalizedExpiryDate, productId]
       );
 
       // Log activity - use STOCK_IN/STOCK_OUT based on direction, or STOCK_ADJUSTMENT for corrections
@@ -2350,8 +2586,11 @@ app.post('/api/transactions', async (req, res) => {
       ]
     );
 
-    // Deduct stock from products (direct quantity deduction)
+    // Deduct stock from products using FIFO batches while keeping product totals in sync.
     for (const item of transaction.items) {
+      const productId = item.productId || item.product_id;
+      let fifoDeductions = [];
+
       await connection.execute(
         `INSERT INTO transaction_items (
           id, transaction_id, product_id, quantity, unit_price, unit_cost, created_at
@@ -2359,18 +2598,17 @@ app.post('/api/transactions', async (req, res) => {
         [
           uuidv4(),
           transactionId,
-          item.productId || item.product_id,
+          productId,
           Number(item.quantity) || 0,
           Number(item.price ?? item.unit_price ?? 0),
           Number(item.cost || 0),
         ]
       );
 
-      // Direct quantity deduction (no FIFO) - exclude deleted products
-      if (item.productId) {
+      if (productId) {
         const [productRows] = await connection.execute(
           'SELECT quantity FROM products WHERE id = ? AND deleted_at IS NULL',
-          [item.productId]
+          [productId]
         );
 
         if (!productRows || productRows.length === 0) {
@@ -2385,9 +2623,30 @@ app.post('/api/transactions', async (req, res) => {
           throw new Error('INSUFFICIENT_STOCK');
         }
 
+        fifoDeductions = deductInventoryBatches(connection, { productId, quantity: quantityToSell });
+
         await connection.execute(
           'UPDATE products SET quantity = quantity - ? WHERE id = ?',
-          [quantityToSell, item.productId]
+          [quantityToSell, productId]
+        );
+
+        await connection.execute(
+          `INSERT INTO stock_movements (
+            id, product_id, product_name, movement_type, quantity,
+            batch_number, expiry_date, reference_number, notes, performed_by, performed_by_id
+          ) VALUES (?, ?, ?, 'sale', ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(),
+            productId,
+            item.name || 'Sold product',
+            quantityToSell,
+            fifoDeductions.map(d => d.batchNumber).filter(Boolean).join(', ') || null,
+            fifoDeductions.map(d => d.expiryDate).filter(Boolean).join(', ') || null,
+            transactionId,
+            'FIFO sale deduction',
+            transaction.userName || null,
+            transaction.userId || null,
+          ]
         );
       }
     }
@@ -3176,33 +3435,91 @@ app.get('/api/reports/summary', async (req, res) => {
     );
     const [txCountRows] = execute(`SELECT COUNT(*) AS total FROM transactions t ${whereSql}`, whereParams);
 
+    const movementWhereParts = ['1=1'];
+    const movementWhereParams = [];
+    if (normalizedStart && normalizedEnd) {
+      movementWhereParts.push('sm.created_at >= ? AND sm.created_at < datetime(?, \'+1 day\')');
+      movementWhereParams.push(normalizedStart, normalizedEnd);
+    } else if (normalizedStart) {
+      movementWhereParts.push('sm.created_at >= ?');
+      movementWhereParams.push(normalizedStart);
+    } else if (normalizedEnd) {
+      movementWhereParts.push('sm.created_at < datetime(?, \'+1 day\')');
+      movementWhereParams.push(normalizedEnd);
+    }
+    if (normalizedCategory) {
+      movementWhereParts.push(`COALESCE(p.category_name, 'Uncategorized') = ?`);
+      movementWhereParams.push(normalizedCategory);
+    }
+    const movementWhereSql = `WHERE ${movementWhereParts.join(' AND ')}`;
+
     const [movementRows] = execute(
       `SELECT
-        t.id AS transaction_id,
-        t.timestamp,
-        ti.product_id,
-        COALESCE(p.name, 'Unknown Product') AS product_name,
-        COALESCE(p.category_name, 'Uncategorized') AS category,
-        ti.quantity,
-        COALESCE(ti.unit_price, 0) AS unit_price,
-        COALESCE(ti.quantity * COALESCE(ti.unit_price, 0), 0) AS total_value
-      FROM transaction_items ti
-      JOIN transactions t ON t.id = ti.transaction_id
-      LEFT JOIN products p ON p.id = ti.product_id
-      ${whereSql}
-      ${itemCategoryClause}
-      ORDER BY t.timestamp DESC
+        id, timestamp, product_id, product_name, category, movement_type, quantity,
+        unit_price, total_value, reference, batch_number, expiry_date, description
+      FROM (
+        SELECT
+          t.id || '-' || ti.product_id AS id,
+          t.timestamp AS timestamp,
+          ti.product_id AS product_id,
+          COALESCE(p.name, 'Unknown Product') AS product_name,
+          COALESCE(p.category_name, 'Uncategorized') AS category,
+          'SALE' AS movement_type,
+          -ti.quantity AS quantity,
+          COALESCE(ti.unit_price, 0) AS unit_price,
+          COALESCE(ti.quantity * COALESCE(ti.unit_price, 0), 0) AS total_value,
+          t.id AS reference,
+          NULL AS batch_number,
+          NULL AS expiry_date,
+          'Sale - Transaction ' || t.id AS description
+        FROM transaction_items ti
+        JOIN transactions t ON t.id = ti.transaction_id
+        LEFT JOIN products p ON p.id = ti.product_id
+        ${whereSql}
+        ${itemCategoryClause}
+        UNION ALL
+        SELECT
+          sm.id AS id,
+          sm.created_at AS timestamp,
+          sm.product_id AS product_id,
+          sm.product_name AS product_name,
+          COALESCE(p.category_name, 'Uncategorized') AS category,
+          UPPER(sm.movement_type) AS movement_type,
+          CASE
+            WHEN LOWER(sm.movement_type) IN ('out', 'stock_out', 'damage', 'write_off') THEN -sm.quantity
+            ELSE sm.quantity
+          END AS quantity,
+          COALESCE(p.cost, 0) AS unit_price,
+          COALESCE(sm.quantity * COALESCE(p.cost, 0), 0) AS total_value,
+          COALESCE(sm.reference_number, sm.id) AS reference,
+          sm.batch_number AS batch_number,
+          sm.expiry_date AS expiry_date,
+          COALESCE(sm.notes, UPPER(sm.movement_type) || ' movement') AS description
+        FROM stock_movements sm
+        LEFT JOIN products p ON p.id = sm.product_id
+        ${movementWhereSql}
+          AND LOWER(sm.movement_type) != 'sale'
+      )
+      ORDER BY timestamp DESC
       LIMIT ? OFFSET ?`,
-      [...whereParams, ...itemCategoryParams, mvLimit, mvOffset]
+      [...whereParams, ...itemCategoryParams, ...movementWhereParams, mvLimit, mvOffset]
     );
     const [movementCountRows] = execute(
-      `SELECT COUNT(*) AS total
-      FROM transaction_items ti
-      JOIN transactions t ON t.id = ti.transaction_id
-      LEFT JOIN products p ON p.id = ti.product_id
-      ${whereSql}
-      ${itemCategoryClause}`,
-      [...whereParams, ...itemCategoryParams]
+      `SELECT SUM(total) AS total FROM (
+        SELECT COUNT(*) AS total
+        FROM transaction_items ti
+        JOIN transactions t ON t.id = ti.transaction_id
+        LEFT JOIN products p ON p.id = ti.product_id
+        ${whereSql}
+        ${itemCategoryClause}
+        UNION ALL
+        SELECT COUNT(*) AS total
+        FROM stock_movements sm
+        LEFT JOIN products p ON p.id = sm.product_id
+        ${movementWhereSql}
+          AND LOWER(sm.movement_type) != 'sale'
+      )`,
+      [...whereParams, ...itemCategoryParams, ...movementWhereParams]
     );
 
     const [restockingRows] = execute(
@@ -3267,17 +3584,19 @@ app.get('/api/reports/summary', async (req, res) => {
       },
       stockMovement: {
         items: (movementRows || []).map((row) => ({
-          id: `${row.transaction_id}-${row.product_id}`,
+          id: row.id,
           timestamp: row.timestamp,
           productId: row.product_id,
           productName: row.product_name,
           category: row.category,
-          type: 'SALE',
-          quantity: -Number(row.quantity || 0),
+          type: row.movement_type,
+          quantity: Number(row.quantity || 0),
           unitPrice: Number(row.unit_price || 0),
           totalValue: Number(row.total_value || 0),
-          reference: row.transaction_id,
-          description: `Sale - Transaction ${row.transaction_id}`,
+          reference: row.reference,
+          batchNumber: row.batch_number || '',
+          expiryDate: row.expiry_date || '',
+          description: row.description,
         })),
         total: Number(movementCountRows?.[0]?.total || 0),
         page: mvPage,
