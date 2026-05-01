@@ -1321,7 +1321,7 @@ const buildFilename = (slug, period) => {
 };
 
 /**
- * Export the Sales summary panel (KPIs + revenue/cost/profit + sales trend).
+ * Export the Sales summary panel (KPIs + revenue/cost + sales trend).
  */
 export const exportSalesSummaryToExcel = ({ salesData = {}, revenueData = {}, salesGrowth = {}, salesTrend = [], period = 'monthly' } = {}) => {
   const workbook = XLSX.utils.book_new();
@@ -1338,8 +1338,6 @@ export const exportSalesSummaryToExcel = ({ salesData = {}, revenueData = {}, sa
     [''],
     ['Revenue', Number(revenueData.revenue || 0).toFixed(2)],
     ['Cost of Goods Sold', Number(revenueData.cost || 0).toFixed(2)],
-    ['Gross Profit', Number(revenueData.profit || 0).toFixed(2)],
-    ['Profit Margin (%)', Number(revenueData.margin || 0).toFixed(2)],
     ['Items Sold', Number(revenueData.itemsSold || 0)],
     [''],
     ['Growth vs previous period', ''],

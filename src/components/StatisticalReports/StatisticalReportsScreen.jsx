@@ -933,7 +933,7 @@ const StatisticalReportsScreen = () => {
     {
       id: 'sales_summary',
       title: 'Sales summary',
-      description: 'KPI cards, revenue / cost / profit, growth vs prior period, and daily sales trend.',
+      description: 'KPI cards, revenue / cost, growth vs prior period, and daily sales trend.',
     },
     {
       id: 'top_products',
@@ -1094,8 +1094,8 @@ const StatisticalReportsScreen = () => {
         )}
       </div>
 
-      {/* Revenue & Profit Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      {/* Revenue Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         <div className={`${colors.card.primary} p-5 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center gap-2 mb-2">
             <ChartBarIcon className="h-4 w-4 text-blue-500" />
@@ -1109,24 +1109,6 @@ const StatisticalReportsScreen = () => {
             <h3 className={`${colors.text.secondary} text-xs uppercase tracking-wider font-medium`}>Cost</h3>
           </div>
           <p className={`text-xl font-bold ${colors.text.primary}`}>{formatCurrency(revenueData.cost)}</p>
-        </div>
-        <div className={`${colors.card.primary} p-5 rounded-lg shadow border ${colors.border.primary}`}>
-          <div className="flex items-center gap-2 mb-2">
-            <ArrowTrendingUpIcon className="h-4 w-4 text-emerald-500" />
-            <h3 className={`${colors.text.secondary} text-xs uppercase tracking-wider font-medium`}>Gross Profit</h3>
-          </div>
-          <p className={`text-xl font-bold ${revenueData.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-            {formatCurrency(revenueData.profit)}
-          </p>
-        </div>
-        <div className={`${colors.card.primary} p-5 rounded-lg shadow border ${colors.border.primary}`}>
-          <div className="flex items-center gap-2 mb-2">
-            <CurrencyDollarIcon className="h-4 w-4 text-purple-500" />
-            <h3 className={`${colors.text.secondary} text-xs uppercase tracking-wider font-medium`}>Profit Margin</h3>
-          </div>
-          <p className={`text-xl font-bold ${revenueData.margin >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-            {revenueData.margin.toFixed(1)}%
-          </p>
         </div>
         <div className={`${colors.card.primary} p-5 rounded-lg shadow border ${colors.border.primary}`}>
           <div className="flex items-center gap-2 mb-2">

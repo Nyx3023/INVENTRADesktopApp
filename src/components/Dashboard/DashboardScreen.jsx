@@ -325,8 +325,7 @@ const DashboardScreen = () => {
         </div>
       </div>
 
-      {/* 4-Col Grid for Key Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-3 gap-5">
         <StatCard
           title={`${currentPeriodData.period} Revenue`}
           value={`₱${currentPeriodData.sales.toLocaleString()}`}
@@ -342,13 +341,6 @@ const DashboardScreen = () => {
           icon={ChartBarIcon}
           color="#f59e0b" // amber
           description="COGS"
-        />
-        <StatCard
-          title={`${currentPeriodData.period} Gross Profit`}
-          value={`₱${(salesMetrics.currentPeriodProfit || 0).toLocaleString()}`}
-          icon={ArrowTrendingUpIcon}
-          color="#10b981" // emerald
-          description="Revenue - Cost"
         />
         <StatCard
           title="Total Sales"

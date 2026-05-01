@@ -23,7 +23,6 @@ const DELETE_OPTIONS = [
   { key: 'product_images',    label: 'Product Images',                description: 'All uploaded product image files',            color: 'purple' },
   { key: 'categories',        label: 'Categories',                    description: 'All product categories',                     color: 'green'  },
   { key: 'suppliers',         label: 'Suppliers',                     description: 'All supplier records',                       color: 'cyan'   },
-  { key: 'purchase_orders',   label: 'Purchase Orders',               description: 'All purchase orders and their items',         color: 'indigo' },
   { key: 'stock_adjustments', label: 'Stock Adjustments',             description: 'All inventory adjustment records',            color: 'pink'   },
   { key: 'activity_logs',     label: 'Activity Logs',                 description: 'All system activity log entries',             color: 'gray'   },
   { key: 'audit_logs',        label: 'Audit Logs',                    description: 'All inventory audit records',                 color: 'yellow' },

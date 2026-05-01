@@ -71,8 +71,7 @@ const UserManagement = () => {
     {
       group: 'Suppliers & POs',
       perms: [
-        { id: 'manage_suppliers', label: 'Manage Suppliers' },
-        { id: 'manage_purchase_orders', label: 'Manage POs' }
+        { id: 'manage_suppliers', label: 'Manage Suppliers' }
       ]
     }
   ];
@@ -85,14 +84,14 @@ const UserManagement = () => {
       'view_sales_history', 'view_receipts', 'void_transaction',
       'view_statistical_reports',
       'adjust_stock', 'perform_audits',
-      'manage_suppliers', 'manage_purchase_orders'
+      'manage_suppliers'
     ],
     employee: [
       'view_inventory', 'add_product', 'edit_product',
       'process_sales', 'apply_discount',
       'view_sales_history', 'view_receipts',
       'adjust_stock', 'perform_audits',
-      'manage_suppliers', 'manage_purchase_orders'
+      'manage_suppliers'
     ]
   };
 

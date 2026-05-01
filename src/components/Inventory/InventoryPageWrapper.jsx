@@ -12,7 +12,6 @@ import LazyPageLoader from '../common/LazyPageLoader';
 
 const ProductsTab = lazy(() => import('./InventoryScreen'));
 const AuditsTab = lazy(() => import('../Audits/AuditsScreen'));
-const PurchaseOrdersTab = lazy(() => import('./PurchaseOrdersScreen'));
 const SuppliersTab = lazy(() => import('./SuppliersScreen'));
 const StockAdjustmentsTab = lazy(() => import('./StockAdjustmentsScreen'));
 
@@ -35,7 +34,6 @@ const InventoryPageWrapper = () => {
     { id: 'products', name: 'Products', icon: CubeIcon, permission: 'view_inventory' },
     { id: 'adjustments', name: 'Stock Adjustments', icon: ScaleIcon, permission: 'adjust_stock' },
     { id: 'audits', name: 'Audits', icon: ClipboardDocumentListIcon, permission: 'perform_audits' },
-    { id: 'purchase', name: 'Purchase Products', icon: ShoppingCartIcon, permission: 'manage_purchase_orders' },
     { id: 'suppliers', name: 'Suppliers', icon: TruckIcon, permission: 'manage_suppliers' },
   ];
 
@@ -49,8 +47,6 @@ const InventoryPageWrapper = () => {
         return hasPermission('adjust_stock') ? <StockAdjustmentsTab /> : null;
       case 'audits':
         return hasPermission('perform_audits') ? <AuditsTab /> : null;
-      case 'purchase':
-        return hasPermission('manage_purchase_orders') ? <PurchaseOrdersTab /> : null;
       case 'suppliers':
         return hasPermission('manage_suppliers') ? <SuppliersTab /> : null;
       default:
