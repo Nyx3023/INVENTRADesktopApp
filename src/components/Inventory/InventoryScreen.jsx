@@ -977,7 +977,7 @@ const InventoryScreen = () => {
                   e.stopPropagation();
                   openStockAdjustment(product);
                 }}
-                className="p-2.5 bg-purple-100 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-900/30 transition-colors flex items-center justify-center col-span-2"
+                className="p-2.5 bg-purple-100 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-900/30 transition-colors flex items-center justify-center"
                 title="Stock Adjustment"
               >
                 <ScaleIcon className="h-5 w-5 inline mr-1" /> Adjust
@@ -989,7 +989,7 @@ const InventoryScreen = () => {
                 setSelectedProductForBatch(product);
                 setShowBatchModal(true);
               }}
-              className={`p-2.5 bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 rounded-lg hover:bg-emerald-200 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center ${hasPermission('delete_product') ? '' : 'col-span-2'}`}
+              className="p-2.5 bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 rounded-lg hover:bg-emerald-200 dark:hover:bg-emerald-900/30 transition-colors flex items-center justify-center"
               title="View Batches"
             >
               <ClipboardDocumentListIcon className="h-5 w-5 inline mr-1" /> Batches
@@ -1001,7 +1001,7 @@ const InventoryScreen = () => {
                   setSelectedProduct(product);
                   setIsModalOpen(true);
                 }}
-                className={`p-2.5 bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center ${hasPermission('delete_product') ? '' : 'col-span-2'}`}
+                className="p-2.5 bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors flex items-center justify-center"
                 title="Edit Product"
               >
                 <PencilIcon className="h-5 w-5 inline mr-1" /> Edit
@@ -1013,7 +1013,7 @@ const InventoryScreen = () => {
                   e.stopPropagation();
                   handleDeleteProduct(product.id);
                 }}
-                className={`p-2.5 bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/30 transition-colors flex items-center justify-center ${hasPermission('edit_product') ? '' : 'col-span-2'}`}
+                className="p-2.5 bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/30 transition-colors flex items-center justify-center"
                 title="Delete Product"
               >
                 <TrashIcon className="h-5 w-5 inline mr-1" /> Delete
@@ -1355,10 +1355,10 @@ const InventoryScreen = () => {
               >
                 {stockMode ? <CheckCircleIcon className="h-5 w-5" /> : <QrCodeIcon className="h-5 w-5" />}
                 <span>
-                  {stockMode && Object.keys(pendingStockScans).length > 0 
-                    ? `Save Scans (${Object.values(pendingStockScans).reduce((a, b) => a + b, 0)})` 
-                    : stockMode 
-                      ? 'Exit Stock Mode' 
+                  {stockMode && Object.keys(pendingStockScans).length > 0
+                    ? `Save Scans (${Object.values(pendingStockScans).reduce((a, b) => a + b, 0)})`
+                    : stockMode
+                      ? 'Exit Stock Mode'
                       : 'Stock Mode'}
                 </span>
               </button>
@@ -1680,9 +1680,9 @@ const InventoryScreen = () => {
                 </button>
               </div>
               <div className="overflow-y-auto p-6">
-                 {/* To keep it simple without circular dependencies, the user can navigate to the full batches page, or we just instruct them */}
-                 <p className="mb-4">For detailed batch management, please use the <strong>Batches</strong> tab at the top of the inventory page.</p>
-                 <button onClick={() => setShowBatchModal(false)} className="px-4 py-2 bg-blue-600 text-white rounded-lg">Close</button>
+                {/* To keep it simple without circular dependencies, the user can navigate to the full batches page, or we just instruct them */}
+                <p className={`mb-4 ${colors.text.primary}`}>For detailed batch management, please use the <strong>Batches</strong> tab at the top of the inventory page.</p>
+                <button onClick={() => setShowBatchModal(false)} className="px-4 py-2 bg-blue-600 text-white rounded-lg">Close</button>
               </div>
             </div>
           </div>
@@ -1692,532 +1692,530 @@ const InventoryScreen = () => {
       {/* Stock Adjustment Modal */}
       {isStockAdjustmentOpen && selectedProduct && (
         <ModalPortal>
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-lg`}>
-            <div className={`flex items-center justify-between px-6 py-4 border-b ${colors.border.primary}`}>
-              <div>
-                <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Stock Adjustment</h3>
-                <p className={`text-sm ${colors.text.secondary}`}>{selectedProduct.name}</p>
-              </div>
-              <button onClick={() => setIsStockAdjustmentOpen(false)} className={`p-2 rounded-lg hover:${colors.bg.secondary}`}>
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="px-6 py-5 space-y-4">
-              {/* Current Stock Display */}
-              <div className={`p-4 rounded-lg ${colors.bg.secondary} border ${colors.border.primary}`}>
-                <p className={`text-sm ${colors.text.secondary}`}>Current Stock</p>
-                <p className={`text-3xl font-bold ${colors.text.primary}`}>{selectedProduct.quantity || 0}</p>
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-lg`}>
+              <div className={`flex items-center justify-between px-6 py-4 border-b ${colors.border.primary}`}>
+                <div>
+                  <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Stock Adjustment</h3>
+                  <p className={`text-sm ${colors.text.secondary}`}>{selectedProduct.name}</p>
+                </div>
+                <button onClick={() => setIsStockAdjustmentOpen(false)} className={`p-2 rounded-lg hover:${colors.bg.secondary}`}>
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
               </div>
 
-              {/* Adjustment Type */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${colors.text.primary}`}>Adjustment Type</label>
-                <select
-                  value={adjustmentData.type}
-                  onChange={(e) => setAdjustmentData({ ...adjustmentData, type: e.target.value })}
-                  className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
+              <div className="px-6 py-5 space-y-4">
+                {/* Current Stock Display */}
+                <div className={`p-4 rounded-lg ${colors.bg.secondary} border ${colors.border.primary}`}>
+                  <p className={`text-sm ${colors.text.secondary}`}>Current Stock</p>
+                  <p className={`text-3xl font-bold ${colors.text.primary}`}>{selectedProduct.quantity || 0}</p>
+                </div>
+
+                {/* Adjustment Type */}
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${colors.text.primary}`}>Adjustment Type</label>
+                  <select
+                    value={adjustmentData.type}
+                    onChange={(e) => setAdjustmentData({ ...adjustmentData, type: e.target.value })}
+                    className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
+                  >
+                    <option value="physical_count">Physical Count</option>
+                    <option value="damage">Damage/Defective</option>
+                    <option value="loss">Loss/Theft</option>
+                    <option value="found">Found/Recovered</option>
+                    <option value="correction">Manual Correction</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                {/* New Quantity */}
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${colors.text.primary}`}>
+                    New Quantity <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={adjustmentData.newQuantity}
+                    onChange={(e) => setAdjustmentData({ ...adjustmentData, newQuantity: e.target.value })}
+                    className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
+                  />
+                  {/* Show difference */}
+                  {adjustmentData.newQuantity !== selectedProduct.quantity && (
+                    <p className={`text-sm mt-1 ${parseInt(adjustmentData.newQuantity) > selectedProduct.quantity
+                      ? 'text-green-600 dark:text-green-400'
+                      : 'text-red-600 dark:text-red-400'
+                      }`}>
+                      {parseInt(adjustmentData.newQuantity) > selectedProduct.quantity ? '+' : ''}
+                      {parseInt(adjustmentData.newQuantity || 0) - selectedProduct.quantity} units
+                    </p>
+                  )}
+                </div>
+
+                {/* Reason */}
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${colors.text.primary}`}>
+                    Reason {adjustmentData.type === 'other' && <span className="text-red-500">*</span>}
+                  </label>
+                  <input
+                    type="text"
+                    value={adjustmentData.reason}
+                    onChange={(e) => setAdjustmentData({ ...adjustmentData, reason: e.target.value })}
+                    placeholder={adjustmentData.type === 'other' ? 'Please provide a reason (required)' : 'e.g., Physical inventory count, damaged goods, etc. (optional)'}
+                    className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
+                  />
+                  {adjustmentData.type === 'other' && (
+                    <p className={`text-xs mt-1 ${colors.text.secondary}`}>
+                      Reason is required when adjustment type is "Other"
+                    </p>
+                  )}
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${colors.text.primary}`}>Notes (Optional)</label>
+                  <textarea
+                    value={adjustmentData.notes}
+                    onChange={(e) => setAdjustmentData({ ...adjustmentData, notes: e.target.value })}
+                    placeholder="Additional details about this adjustment..."
+                    rows="3"
+                    className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
+                  />
+                </div>
+              </div>
+
+              <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-3`}>
+                <button
+                  onClick={() => setIsStockAdjustmentOpen(false)}
+                  className={`px-4 py-2 rounded-lg ${colors.bg.tertiary} ${colors.text.secondary} hover:${colors.text.primary}`}
                 >
-                  <option value="physical_count">Physical Count</option>
-                  <option value="damage">Damage/Defective</option>
-                  <option value="loss">Loss/Theft</option>
-                  <option value="found">Found/Recovered</option>
-                  <option value="correction">Manual Correction</option>
-                  <option value="other">Other</option>
-                </select>
+                  Cancel
+                </button>
+                <button
+                  onClick={submitStockAdjustment}
+                  className="px-4 py-2 rounded-lg bg-purple-600 dark:bg-purple-500 text-white hover:bg-purple-700 dark:hover:bg-purple-600 inline-flex items-center gap-2"
+                >
+                  <ScaleIcon className="h-5 w-5" />
+                  Submit Adjustment
+                </button>
               </div>
-
-              {/* New Quantity */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${colors.text.primary}`}>
-                  New Quantity <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={adjustmentData.newQuantity}
-                  onChange={(e) => setAdjustmentData({ ...adjustmentData, newQuantity: e.target.value })}
-                  className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
-                />
-                {/* Show difference */}
-                {adjustmentData.newQuantity !== selectedProduct.quantity && (
-                  <p className={`text-sm mt-1 ${parseInt(adjustmentData.newQuantity) > selectedProduct.quantity
-                    ? 'text-green-600 dark:text-green-400'
-                    : 'text-red-600 dark:text-red-400'
-                    }`}>
-                    {parseInt(adjustmentData.newQuantity) > selectedProduct.quantity ? '+' : ''}
-                    {parseInt(adjustmentData.newQuantity || 0) - selectedProduct.quantity} units
-                  </p>
-                )}
-              </div>
-
-              {/* Reason */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${colors.text.primary}`}>
-                  Reason {adjustmentData.type === 'other' && <span className="text-red-500">*</span>}
-                </label>
-                <input
-                  type="text"
-                  value={adjustmentData.reason}
-                  onChange={(e) => setAdjustmentData({ ...adjustmentData, reason: e.target.value })}
-                  placeholder={adjustmentData.type === 'other' ? 'Please provide a reason (required)' : 'e.g., Physical inventory count, damaged goods, etc. (optional)'}
-                  className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
-                />
-                {adjustmentData.type === 'other' && (
-                  <p className={`text-xs mt-1 ${colors.text.secondary}`}>
-                    Reason is required when adjustment type is "Other"
-                  </p>
-                )}
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${colors.text.primary}`}>Notes (Optional)</label>
-                <textarea
-                  value={adjustmentData.notes}
-                  onChange={(e) => setAdjustmentData({ ...adjustmentData, notes: e.target.value })}
-                  placeholder="Additional details about this adjustment..."
-                  rows="3"
-                  className={`w-full px-3 py-2 rounded-lg border ${colors.input.primary}`}
-                />
-              </div>
-            </div>
-
-            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-3`}>
-              <button
-                onClick={() => setIsStockAdjustmentOpen(false)}
-                className={`px-4 py-2 rounded-lg ${colors.bg.tertiary} ${colors.text.secondary} hover:${colors.text.primary}`}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submitStockAdjustment}
-                className="px-4 py-2 rounded-lg bg-purple-600 dark:bg-purple-500 text-white hover:bg-purple-700 dark:hover:bg-purple-600 inline-flex items-center gap-2"
-              >
-                <ScaleIcon className="h-5 w-5" />
-                Submit Adjustment
-              </button>
             </div>
           </div>
-        </div>
         </ModalPortal>
       )}
 
       {/* Single Product Delete Confirmation Modal */}
       {productToDelete && (
         <ModalPortal>
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setProductToDelete(null)}>
-          <div
-            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-md`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
-              <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Delete Product</h3>
-              <p className={`text-sm ${colors.text.secondary} mt-1`}>
-                Are you sure you want to delete this product?
-              </p>
-            </div>
-
-            <div className="px-6 py-4">
-              <div className={`p-4 rounded-lg ${colors.bg.secondary} mb-4`}>
-                <p className={`text-sm font-medium ${colors.text.primary}`}>
-                  {productToDelete.name}
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setProductToDelete(null)}>
+            <div
+              className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-md`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
+                <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Delete Product</h3>
+                <p className={`text-sm ${colors.text.secondary} mt-1`}>
+                  Are you sure you want to delete this product?
                 </p>
               </div>
 
-              <div className={`p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800`}>
-                <p className={`text-sm text-amber-800 dark:text-amber-300`}>
-                  <strong>Note:</strong> Deleted products will be removed from your inventory. Products that have been used in transactions will be marked as deleted but preserved for record keeping.
-                </p>
-              </div>
-            </div>
+              <div className="px-6 py-4">
+                <div className={`p-4 rounded-lg ${colors.bg.secondary} mb-4`}>
+                  <p className={`text-sm font-medium ${colors.text.primary}`}>
+                    {productToDelete.name}
+                  </p>
+                </div>
 
-            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
-              <button
-                onClick={() => setProductToDelete(null)}
-                className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDeleteProduct}
-                className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 inline-flex items-center gap-2"
-              >
-                <TrashIcon className="h-5 w-5" />
-                Delete Product
-              </button>
+                <div className={`p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800`}>
+                  <p className={`text-sm text-amber-800 dark:text-amber-300`}>
+                    <strong>Note:</strong> Deleted products will be removed from your inventory. Products that have been used in transactions will be marked as deleted but preserved for record keeping.
+                  </p>
+                </div>
+              </div>
+
+              <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
+                <button
+                  onClick={() => setProductToDelete(null)}
+                  className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDeleteProduct}
+                  className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 inline-flex items-center gap-2"
+                >
+                  <TrashIcon className="h-5 w-5" />
+                  Delete Product
+                </button>
+              </div>
             </div>
           </div>
-        </div>
         </ModalPortal>
       )}
 
       {/* Bulk Delete Confirmation Modal */}
       {showBulkDeleteModal && (
         <ModalPortal>
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setShowBulkDeleteModal(false)}>
-          <div
-            className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-md`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
-              <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Delete Multiple Products</h3>
-              <p className={`text-sm ${colors.text.secondary} mt-1`}>
-                Are you sure you want to delete the selected products?
-              </p>
-            </div>
-
-            <div className="px-6 py-4">
-              <div className={`p-4 rounded-lg ${colors.bg.secondary} mb-4`}>
-                <p className={`text-sm font-medium ${colors.text.primary}`}>
-                  {selectedProducts.length} product(s) selected for deletion
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setShowBulkDeleteModal(false)}>
+            <div
+              className={`${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} w-full max-w-md`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={`px-6 py-4 border-b ${colors.border.primary}`}>
+                <h3 className={`text-lg font-semibold ${colors.text.primary}`}>Delete Multiple Products</h3>
+                <p className={`text-sm ${colors.text.secondary} mt-1`}>
+                  Are you sure you want to delete the selected products?
                 </p>
               </div>
 
-              <div className={`p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800`}>
-                <p className={`text-sm text-amber-800 dark:text-amber-300`}>
-                  <strong>Note:</strong> Deleted products will be removed from your inventory. Products that have been used in transactions will be marked as deleted but preserved for record keeping.
-                </p>
-              </div>
-            </div>
+              <div className="px-6 py-4">
+                <div className={`p-4 rounded-lg ${colors.bg.secondary} mb-4`}>
+                  <p className={`text-sm font-medium ${colors.text.primary}`}>
+                    {selectedProducts.length} product(s) selected for deletion
+                  </p>
+                </div>
 
-            <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
-              <button
-                onClick={() => setShowBulkDeleteModal(false)}
-                className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleBulkDelete}
-                className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 inline-flex items-center gap-2"
-              >
-                <TrashIcon className="h-5 w-5" />
-                Delete {selectedProducts.length} Product(s)
-              </button>
+                <div className={`p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800`}>
+                  <p className={`text-sm text-amber-800 dark:text-amber-300`}>
+                    <strong>Note:</strong> Deleted products will be removed from your inventory. Products that have been used in transactions will be marked as deleted but preserved for record keeping.
+                  </p>
+                </div>
+              </div>
+
+              <div className={`px-6 py-4 border-t ${colors.border.primary} flex justify-end gap-2`}>
+                <button
+                  onClick={() => setShowBulkDeleteModal(false)}
+                  className="px-4 py-2 bg-gray-600 dark:bg-gray-500 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleBulkDelete}
+                  className="px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 inline-flex items-center gap-2"
+                >
+                  <TrashIcon className="h-5 w-5" />
+                  Delete {selectedProducts.length} Product(s)
+                </button>
+              </div>
             </div>
           </div>
-        </div>
         </ModalPortal>
       )}
 
       {/* Stock Mode Modal */}
       {stockMode && (
         <ModalPortal>
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50"
-          onClick={() => {}} // Don't close on backdrop click
-        >
           <div
-            className={`${colors.card.primary} rounded-2xl shadow-2xl border-2 border-green-500 w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden`}
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+            onClick={() => { }} // Don't close on backdrop click
           >
-            {/* Modal Header */}
-            <div className={`px-5 py-3 border-b ${colors.border.primary} flex items-center justify-between flex-shrink-0 bg-gradient-to-r from-green-600 to-emerald-600`}>
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-white/20 rounded-xl">
-                  <QrCodeIcon className="h-5 w-5 text-white" />
+            <div
+              className={`${colors.card.primary} rounded-2xl shadow-2xl border-2 border-green-500 w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className={`px-5 py-3 border-b ${colors.border.primary} flex items-center justify-between flex-shrink-0 bg-gradient-to-r from-green-600 to-emerald-600`}>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-white/20 rounded-xl">
+                    <QrCodeIcon className="h-5 w-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Stock Mode</h3>
+                    <p className="text-xs text-green-100">
+                      {Object.keys(pendingStockScans).length > 0
+                        ? `${Object.keys(pendingStockScans).length} product(s) · ${Object.values(pendingStockScans).reduce((a, b) => a + b, 0)} total items staged`
+                        : 'Scan barcodes or search products to stage stock'}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-base font-bold text-white">Stock Mode</h3>
-                  <p className="text-xs text-green-100">
-                    {Object.keys(pendingStockScans).length > 0
-                      ? `${Object.keys(pendingStockScans).length} product(s) · ${Object.values(pendingStockScans).reduce((a, b) => a + b, 0)} total items staged`
-                      : 'Scan barcodes or search products to stage stock'}
-                  </p>
-                </div>
+                <button
+                  onClick={toggleStockMode}
+                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                  title="Exit Stock Mode"
+                >
+                  <XMarkIcon className="h-5 w-5 text-white" />
+                </button>
               </div>
-              <button
-                onClick={toggleStockMode}
-                className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-                title="Exit Stock Mode"
-              >
-                <XMarkIcon className="h-5 w-5 text-white" />
-              </button>
-            </div>
 
-            {/* Modal Body - Split Layout */}
-            <div className="flex-1 flex overflow-hidden min-h-0">
-              {/* Left Panel - Input Controls */}
-              <div className={`w-[280px] flex-shrink-0 border-r ${colors.border.primary} flex flex-col ${colors.bg.secondary}`}>
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                  {/* Quantity per entry */}
-                  <div>
-                    <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
-                      Quantity per entry
-                    </label>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => setStockModeQty(Math.max(1, stockModeQty - 1))}
-                        className={`flex-shrink-0 p-2 rounded-lg ${colors.card.primary} border ${colors.border.primary} hover:border-green-400 transition-colors`}
-                      >
-                        <MinusIcon className="h-4 w-4" />
-                      </button>
-                      <input
-                        type="number"
-                        value={stockModeQty}
-                        onChange={(e) => setStockModeQty(Math.max(1, parseInt(e.target.value) || 1))}
-                        className={`min-w-0 flex-1 text-center border-2 rounded-lg px-2 py-2.5 text-sm font-bold ${colors.input.primary} focus:border-green-500 focus:ring-2 focus:ring-green-200`}
-                        min="1"
-                      />
-                      <button
-                        onClick={() => setStockModeQty(stockModeQty + 1)}
-                        className={`flex-shrink-0 p-2 rounded-lg ${colors.card.primary} border ${colors.border.primary} hover:border-green-400 transition-colors`}
-                      >
-                        <ArrowUpIcon className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Input Method Tabs */}
-                  <div>
-                    <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
-                      Input method
-                    </label>
-                    <div className="flex rounded-xl overflow-hidden border-2 border-green-400 dark:border-green-600">
-                      <button
-                        onClick={() => {
-                          setStockModeInputMethod('barcode');
-                          setTimeout(() => stockModeBarcodeRef.current?.focus(), 50);
-                        }}
-                        className={`flex-1 px-3 py-2 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                          stockModeInputMethod === 'barcode'
-                            ? 'bg-green-600 text-white'
-                            : `${colors.card.primary} ${colors.text.secondary} hover:bg-green-50 dark:hover:bg-green-900/20`
-                        }`}
-                      >
-                        <QrCodeIcon className="h-4 w-4" />
-                        Barcode
-                      </button>
-                      <button
-                        onClick={() => {
-                          setStockModeInputMethod('search');
-                          setTimeout(() => stockModeSearchRef.current?.focus(), 50);
-                        }}
-                        className={`flex-1 px-3 py-2 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                          stockModeInputMethod === 'search'
-                            ? 'bg-green-600 text-white'
-                            : `${colors.card.primary} ${colors.text.secondary} hover:bg-green-50 dark:hover:bg-green-900/20`
-                        }`}
-                      >
-                        <MagnifyingGlassIcon className="h-4 w-4" />
-                        Search
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Barcode input */}
-                  {stockModeInputMethod === 'barcode' && (
+              {/* Modal Body - Split Layout */}
+              <div className="flex-1 flex overflow-hidden min-h-0">
+                {/* Left Panel - Input Controls */}
+                <div className={`w-[280px] flex-shrink-0 border-r ${colors.border.primary} flex flex-col ${colors.bg.secondary}`}>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {/* Quantity per entry */}
                     <div>
                       <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
-                        Scan or type barcode
+                        Quantity per entry
                       </label>
-                      <input
-                        ref={stockModeBarcodeRef}
-                        type="text"
-                        value={stockModeBarcode}
-                        onChange={(e) => setStockModeBarcode(e.target.value)}
-                        onKeyDown={handleStockModeBarcodeKeyDown}
-                        placeholder="Scan barcode here..."
-                        className={`w-full border-2 rounded-lg px-3 py-2.5 text-sm ${colors.input.primary} focus:ring-2 focus:ring-green-400 focus:border-green-500`}
-                        autoFocus
-                      />
-                      <p className={`text-xs ${colors.text.tertiary} text-center mt-2`}>
-                        Press <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs font-mono">Enter</kbd> after scanning
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Product Search input */}
-                  {stockModeInputMethod === 'search' && (
-                    <div className="relative">
-                      <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
-                        Search by name
-                      </label>
-                      <div className="relative">
-                        <MagnifyingGlassIcon className={`h-5 w-5 absolute left-3 top-1/2 -translate-y-1/2 ${colors.text.tertiary}`} />
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setStockModeQty(Math.max(1, stockModeQty - 1))}
+                          className={`flex-shrink-0 p-2 rounded-lg ${colors.card.primary} border ${colors.border.primary} hover:border-green-400 transition-colors`}
+                        >
+                          <MinusIcon className="h-4 w-4" />
+                        </button>
                         <input
-                          ref={stockModeSearchRef}
-                          type="text"
-                          value={stockModeProductSearch}
-                          onChange={(e) => {
-                            setStockModeProductSearch(e.target.value);
-                            setStockModeShowDropdown(true);
+                          type="number"
+                          value={stockModeQty}
+                          onChange={(e) => setStockModeQty(Math.max(1, parseInt(e.target.value) || 1))}
+                          className={`min-w-0 flex-1 text-center border-2 rounded-lg px-2 py-2.5 text-sm font-bold ${colors.input.primary} focus:border-green-500 focus:ring-2 focus:ring-green-200`}
+                          min="1"
+                        />
+                        <button
+                          onClick={() => setStockModeQty(stockModeQty + 1)}
+                          className={`flex-shrink-0 p-2 rounded-lg ${colors.card.primary} border ${colors.border.primary} hover:border-green-400 transition-colors`}
+                        >
+                          <ArrowUpIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Input Method Tabs */}
+                    <div>
+                      <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
+                        Input method
+                      </label>
+                      <div className="flex rounded-xl overflow-hidden border-2 border-green-400 dark:border-green-600">
+                        <button
+                          onClick={() => {
+                            setStockModeInputMethod('barcode');
+                            setTimeout(() => stockModeBarcodeRef.current?.focus(), 50);
                           }}
-                          onFocus={() => setStockModeShowDropdown(true)}
-                          placeholder="Type product name..."
-                          className={`w-full border-2 rounded-lg pl-9 pr-3 py-2.5 text-sm ${colors.input.primary} focus:ring-2 focus:ring-green-400 focus:border-green-500`}
+                          className={`flex-1 px-3 py-2 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${stockModeInputMethod === 'barcode'
+                              ? 'bg-green-600 text-white'
+                              : `${colors.card.primary} ${colors.text.secondary} hover:bg-green-50 dark:hover:bg-green-900/20`
+                            }`}
+                        >
+                          <QrCodeIcon className="h-4 w-4" />
+                          Barcode
+                        </button>
+                        <button
+                          onClick={() => {
+                            setStockModeInputMethod('search');
+                            setTimeout(() => stockModeSearchRef.current?.focus(), 50);
+                          }}
+                          className={`flex-1 px-3 py-2 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${stockModeInputMethod === 'search'
+                              ? 'bg-green-600 text-white'
+                              : `${colors.card.primary} ${colors.text.secondary} hover:bg-green-50 dark:hover:bg-green-900/20`
+                            }`}
+                        >
+                          <MagnifyingGlassIcon className="h-4 w-4" />
+                          Search
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Barcode input */}
+                    {stockModeInputMethod === 'barcode' && (
+                      <div>
+                        <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
+                          Scan or type barcode
+                        </label>
+                        <input
+                          ref={stockModeBarcodeRef}
+                          type="text"
+                          value={stockModeBarcode}
+                          onChange={(e) => setStockModeBarcode(e.target.value)}
+                          onKeyDown={handleStockModeBarcodeKeyDown}
+                          placeholder="Scan barcode here..."
+                          className={`w-full border-2 rounded-lg px-3 py-2.5 text-sm ${colors.input.primary} focus:ring-2 focus:ring-green-400 focus:border-green-500`}
                           autoFocus
                         />
+                        <p className={`text-xs ${colors.text.tertiary} text-center mt-2`}>
+                          Press <kbd className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-xs font-mono">Enter</kbd> after scanning
+                        </p>
                       </div>
+                    )}
 
-                      {/* Product search dropdown */}
-                      {stockModeShowDropdown && stockModeProductSearch.trim() && (
-                        <div className={`absolute z-[60] w-full mt-1 max-h-60 overflow-y-auto ${colors.card.primary} border-2 ${colors.border.primary} rounded-xl shadow-2xl`}>
-                          {(() => {
-                            const results = getStockModeFilteredProducts();
-                            if (results.length === 0) {
-                              return (
-                                <div className={`px-4 py-4 text-sm ${colors.text.secondary} text-center italic`}>
-                                  No products found for "{stockModeProductSearch}"
-                                </div>
-                              );
-                            }
-                            return results.map(product => (
-                              <button
-                                key={product.id}
-                                type="button"
-                                className={`w-full text-left px-4 py-3 cursor-pointer hover:bg-green-50 dark:hover:bg-green-900/20 ${colors.text.primary} border-b ${colors.border.primary} last:border-b-0 transition-colors`}
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  handleStockModeProductSelect(product);
-                                }}
-                              >
-                                <div className="font-medium text-sm truncate">{product.name}</div>
-                                <div className={`text-xs ${colors.text.secondary} mt-1 flex items-center gap-2 flex-wrap`}>
-                                  {product.barcode && <span className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-[10px]">📦 {product.barcode}</span>}
-                                  {!product.barcode && <span className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded text-[10px]">No barcode</span>}
-                                  <span>Stock: <strong>{product.quantity || 0}</strong></span>
-                                  {product.category_name && <span>· {product.category_name}</span>}
-                                </div>
-                              </button>
-                            ));
-                          })()}
+                    {/* Product Search input */}
+                    {stockModeInputMethod === 'search' && (
+                      <div className="relative">
+                        <label className={`block text-xs font-semibold mb-1.5 ${colors.text.primary}`}>
+                          Search by name
+                        </label>
+                        <div className="relative">
+                          <MagnifyingGlassIcon className={`h-5 w-5 absolute left-3 top-1/2 -translate-y-1/2 ${colors.text.tertiary}`} />
+                          <input
+                            ref={stockModeSearchRef}
+                            type="text"
+                            value={stockModeProductSearch}
+                            onChange={(e) => {
+                              setStockModeProductSearch(e.target.value);
+                              setStockModeShowDropdown(true);
+                            }}
+                            onFocus={() => setStockModeShowDropdown(true)}
+                            placeholder="Type product name..."
+                            className={`w-full border-2 rounded-lg pl-9 pr-3 py-2.5 text-sm ${colors.input.primary} focus:ring-2 focus:ring-green-400 focus:border-green-500`}
+                            autoFocus
+                          />
                         </div>
-                      )}
 
-                      <p className={`text-xs ${colors.text.tertiary} text-center mt-2`}>
-                        Click a product to stage it
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
+                        {/* Product search dropdown */}
+                        {stockModeShowDropdown && stockModeProductSearch.trim() && (
+                          <div className={`absolute z-[60] w-full mt-1 max-h-60 overflow-y-auto ${colors.card.primary} border-2 ${colors.border.primary} rounded-xl shadow-2xl`}>
+                            {(() => {
+                              const results = getStockModeFilteredProducts();
+                              if (results.length === 0) {
+                                return (
+                                  <div className={`px-4 py-4 text-sm ${colors.text.secondary} text-center italic`}>
+                                    No products found for "{stockModeProductSearch}"
+                                  </div>
+                                );
+                              }
+                              return results.map(product => (
+                                <button
+                                  key={product.id}
+                                  type="button"
+                                  className={`w-full text-left px-4 py-3 cursor-pointer hover:bg-green-50 dark:hover:bg-green-900/20 ${colors.text.primary} border-b ${colors.border.primary} last:border-b-0 transition-colors`}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    handleStockModeProductSelect(product);
+                                  }}
+                                >
+                                  <div className="font-medium text-sm truncate">{product.name}</div>
+                                  <div className={`text-xs ${colors.text.secondary} mt-1 flex items-center gap-2 flex-wrap`}>
+                                    {product.barcode && <span className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-[10px]">📦 {product.barcode}</span>}
+                                    {!product.barcode && <span className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded text-[10px]">No barcode</span>}
+                                    <span>Stock: <strong>{product.quantity || 0}</strong></span>
+                                    {product.category_name && <span>· {product.category_name}</span>}
+                                  </div>
+                                </button>
+                              ));
+                            })()}
+                          </div>
+                        )}
 
-              {/* Right Panel - Staged Products List */}
-              <div className="flex-1 flex flex-col min-w-0">
-                {/* Staged Products Header */}
-                <div className={`px-5 py-2.5 border-b ${colors.border.primary} flex items-center justify-between flex-shrink-0`}>
-                  <div className="flex items-center gap-2">
-                    <h4 className={`text-sm font-bold uppercase tracking-wider ${colors.text.secondary}`}>Staged Products</h4>
-                    {Object.keys(pendingStockScans).length > 0 && (
-                      <span className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-bold px-2 py-0.5 rounded-full">
-                        {Object.keys(pendingStockScans).length}
-                      </span>
+                        <p className={`text-xs ${colors.text.tertiary} text-center mt-2`}>
+                          Click a product to stage it
+                        </p>
+                      </div>
                     )}
                   </div>
-                  {Object.keys(pendingStockScans).length > 0 && (
-                    <div className={`text-xs ${colors.text.secondary}`}>
-                      Total: <strong className="text-green-600 dark:text-green-400">+{Object.values(pendingStockScans).reduce((a, b) => a + b, 0)}</strong> items
-                    </div>
-                  )}
                 </div>
 
-                {/* Staged Products Scrollable List */}
-                <div className="flex-1 overflow-y-auto px-5 py-3">
-                  {Object.keys(pendingStockScans).length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center py-12">
-                      <div className={`p-4 rounded-2xl ${colors.bg.secondary} mb-4`}>
-                        <CubeIcon className={`h-12 w-12 ${colors.text.tertiary}`} />
+                {/* Right Panel - Staged Products List */}
+                <div className="flex-1 flex flex-col min-w-0">
+                  {/* Staged Products Header */}
+                  <div className={`px-5 py-2.5 border-b ${colors.border.primary} flex items-center justify-between flex-shrink-0`}>
+                    <div className="flex items-center gap-2">
+                      <h4 className={`text-sm font-bold uppercase tracking-wider ${colors.text.secondary}`}>Staged Products</h4>
+                      {Object.keys(pendingStockScans).length > 0 && (
+                        <span className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-bold px-2 py-0.5 rounded-full">
+                          {Object.keys(pendingStockScans).length}
+                        </span>
+                      )}
+                    </div>
+                    {Object.keys(pendingStockScans).length > 0 && (
+                      <div className={`text-xs ${colors.text.secondary}`}>
+                        Total: <strong className="text-green-600 dark:text-green-400">+{Object.values(pendingStockScans).reduce((a, b) => a + b, 0)}</strong> items
                       </div>
-                      <h4 className={`text-base font-semibold ${colors.text.primary} mb-1`}>No products staged yet</h4>
-                      <p className={`text-sm ${colors.text.secondary} max-w-xs`}>
-                        {stockModeInputMethod === 'barcode'
-                          ? 'Scan a barcode or switch to Product Search to start adding stock'
-                          : 'Search for a product and click it to stage stock'}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {Object.entries(pendingStockScans).map(([productId, qty]) => {
-                        const product = safeProducts.find(p => p.id === productId);
-                        if (!product) return null;
-                        const currentQty = Number(product.quantity) || 0;
-                        const newQty = currentQty + qty;
+                    )}
+                  </div>
 
-                        return (
-                          <div
-                            key={productId}
-                            className={`p-3.5 rounded-xl border ${colors.border.primary} ${colors.bg.secondary} flex items-center gap-3 hover:border-green-300 dark:hover:border-green-700 transition-colors`}
-                          >
-                            {/* Product Info */}
-                            <div className="flex-1 min-w-0">
-                              <p className={`font-medium ${colors.text.primary} truncate text-sm`}>{product.name}</p>
-                              <p className={`text-xs ${colors.text.secondary} mt-0.5 flex items-center gap-1.5`}>
-                                {product.barcode
-                                  ? <span className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-[10px]">📦 {product.barcode}</span>
-                                  : <span className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded text-[10px]">No barcode</span>
-                                }
-                                <span>· {product.category_name || 'Uncategorized'}</span>
-                              </p>
-                            </div>
+                  {/* Staged Products Scrollable List */}
+                  <div className="flex-1 overflow-y-auto px-5 py-3">
+                    {Object.keys(pendingStockScans).length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full text-center py-12">
+                        <div className={`p-4 rounded-2xl ${colors.bg.secondary} mb-4`}>
+                          <CubeIcon className={`h-12 w-12 ${colors.text.tertiary}`} />
+                        </div>
+                        <h4 className={`text-base font-semibold ${colors.text.primary} mb-1`}>No products staged yet</h4>
+                        <p className={`text-sm ${colors.text.secondary} max-w-xs`}>
+                          {stockModeInputMethod === 'barcode'
+                            ? 'Scan a barcode or switch to Product Search to start adding stock'
+                            : 'Search for a product and click it to stage stock'}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {Object.entries(pendingStockScans).map(([productId, qty]) => {
+                          const product = safeProducts.find(p => p.id === productId);
+                          if (!product) return null;
+                          const currentQty = Number(product.quantity) || 0;
+                          const newQty = currentQty + qty;
 
-                            {/* Current → New Stock */}
-                            <div className="flex items-center gap-1.5 text-sm flex-shrink-0">
-                              <span className={`${colors.text.secondary} tabular-nums`}>{currentQty}</span>
-                              <ChevronRightIcon className="h-3.5 w-3.5 text-gray-400" />
-                              <span className="font-bold text-green-600 dark:text-green-400 tabular-nums">{newQty}</span>
-                            </div>
-
-                            {/* Editable Qty */}
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              <span className={`text-xs font-bold text-green-600 dark:text-green-400`}>+</span>
-                              <input
-                                type="number"
-                                min="1"
-                                value={qty}
-                                onChange={(e) => updatePendingScanQty(productId, e.target.value)}
-                                className={`w-16 p-1.5 text-center rounded-lg border-2 ${colors.input.primary} text-sm font-bold focus:border-green-500 focus:ring-1 focus:ring-green-200`}
-                              />
-                            </div>
-
-                            {/* Remove Button */}
-                            <button
-                              onClick={() => removePendingScan(productId)}
-                              className="p-1.5 rounded-lg text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors flex-shrink-0"
-                              title="Remove this item"
+                          return (
+                            <div
+                              key={productId}
+                              className={`p-3.5 rounded-xl border ${colors.border.primary} ${colors.bg.secondary} flex items-center gap-3 hover:border-green-300 dark:hover:border-green-700 transition-colors`}
                             >
-                              <XMarkIcon className="h-4 w-4" />
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                              {/* Product Info */}
+                              <div className="flex-1 min-w-0">
+                                <p className={`font-medium ${colors.text.primary} truncate text-sm`}>{product.name}</p>
+                                <p className={`text-xs ${colors.text.secondary} mt-0.5 flex items-center gap-1.5`}>
+                                  {product.barcode
+                                    ? <span className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-[10px]">📦 {product.barcode}</span>
+                                    : <span className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded text-[10px]">No barcode</span>
+                                  }
+                                  <span>· {product.category_name || 'Uncategorized'}</span>
+                                </p>
+                              </div>
+
+                              {/* Current → New Stock */}
+                              <div className="flex items-center gap-1.5 text-sm flex-shrink-0">
+                                <span className={`${colors.text.secondary} tabular-nums`}>{currentQty}</span>
+                                <ChevronRightIcon className="h-3.5 w-3.5 text-gray-400" />
+                                <span className="font-bold text-green-600 dark:text-green-400 tabular-nums">{newQty}</span>
+                              </div>
+
+                              {/* Editable Qty */}
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <span className={`text-xs font-bold text-green-600 dark:text-green-400`}>+</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={qty}
+                                  onChange={(e) => updatePendingScanQty(productId, e.target.value)}
+                                  className={`w-16 p-1.5 text-center rounded-lg border-2 ${colors.input.primary} text-sm font-bold focus:border-green-500 focus:ring-1 focus:ring-green-200`}
+                                />
+                              </div>
+
+                              {/* Remove Button */}
+                              <button
+                                onClick={() => removePendingScan(productId)}
+                                className="p-1.5 rounded-lg text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors flex-shrink-0"
+                                title="Remove this item"
+                              >
+                                <XMarkIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Modal Footer */}
-            <div className={`px-5 py-3 border-t-2 ${colors.border.primary} flex items-center justify-between gap-3 flex-shrink-0 ${colors.bg.secondary}`}>
-              <button
-                onClick={discardStockModeScans}
-                disabled={isSavingStock}
-                className={`px-5 py-2.5 border ${colors.border.primary} rounded-xl text-sm font-medium ${colors.text.secondary} hover:${colors.bg.tertiary} transition-all duration-200 disabled:opacity-50`}
-              >
-                Discard & Exit
-              </button>
-              <button
-                onClick={saveStockModeScans}
-                disabled={isSavingStock || Object.keys(pendingStockScans).length === 0}
-                className="px-8 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-bold transition-all duration-200 shadow-lg shadow-green-600/20 flex items-center gap-2 disabled:opacity-50 disabled:shadow-none"
-              >
-                {isSavingStock ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white/30 border-t-white"></div>
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircleIcon className="h-5 w-5" />
-                    Save All {Object.keys(pendingStockScans).length > 0 ? `(${Object.values(pendingStockScans).reduce((a, b) => a + b, 0)} items)` : ''}
-                  </>
-                )}
-              </button>
+              {/* Modal Footer */}
+              <div className={`px-5 py-3 border-t-2 ${colors.border.primary} flex items-center justify-between gap-3 flex-shrink-0 ${colors.bg.secondary}`}>
+                <button
+                  onClick={discardStockModeScans}
+                  disabled={isSavingStock}
+                  className={`px-5 py-2.5 border ${colors.border.primary} rounded-xl text-sm font-medium ${colors.text.secondary} hover:${colors.bg.tertiary} transition-all duration-200 disabled:opacity-50`}
+                >
+                  Discard & Exit
+                </button>
+                <button
+                  onClick={saveStockModeScans}
+                  disabled={isSavingStock || Object.keys(pendingStockScans).length === 0}
+                  className="px-8 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-bold transition-all duration-200 shadow-lg shadow-green-600/20 flex items-center gap-2 disabled:opacity-50 disabled:shadow-none"
+                >
+                  {isSavingStock ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white/30 border-t-white"></div>
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircleIcon className="h-5 w-5" />
+                      Save All {Object.keys(pendingStockScans).length > 0 ? `(${Object.values(pendingStockScans).reduce((a, b) => a + b, 0)} items)` : ''}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
         </ModalPortal>
       )}
     </div>

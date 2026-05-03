@@ -16,6 +16,8 @@
     "setup-barcodes": "node scripts/add-test-barcodes.js",
     "build:portable": "node scripts/build-portable.js",
     "build:installer": "node scripts/build-installer.js",
+    "seed:sales": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/seed-sales-data.js",
+    "seed:batches": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/seed-inventory-batches.js",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {

@@ -432,7 +432,7 @@ const StatisticalReportsScreen = () => {
         yearlySales: salesData.yearly || 0
       };
 
-      const filename = exportUtils.exportStatisticalReportPDF(
+      const filename = exportStatisticalReportPDF(
         {
           summary: formattedSummary,
           topProducts: topProducts,
