@@ -35,6 +35,7 @@ import {
 import ProductModal from './ProductModal';
 import InventoryAuditModal from './InventoryAuditModal';
 import ImportProductsModal from './ImportProductsModal';
+import ProductBatchesModal from './ProductBatchesModal';
 import { productService, categoryService, auditService, stockAdjustmentService, stockMovementService } from '../../services/api';
 import { exportProductsToExcel } from '../../utils/exportUtils';
 import { useAuth, usePermissions } from '../../context/AuthContext';
@@ -1668,25 +1669,19 @@ const InventoryScreen = () => {
         </div>
       )}
 
-      {/* Batch Modal stub since we only use it if we want to show a popup version */}
+      {/* Per-product Batches modal: list / add / edit / delete */}
       {showBatchModal && selectedProductForBatch && (
-        <ModalPortal>
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className={`w-full max-w-4xl max-h-[90vh] flex flex-col ${colors.card.primary} rounded-2xl shadow-2xl border ${colors.border.primary} overflow-hidden`}>
-              <div className={`flex items-center justify-between px-6 py-4 border-b ${colors.border.primary} bg-slate-50/50 dark:bg-slate-800/20`}>
-                <h2 className={`text-xl font-bold ${colors.text.primary}`}>Batches for {selectedProductForBatch.name}</h2>
-                <button onClick={() => setShowBatchModal(false)} className={`p-2 rounded-xl transition-colors hover:bg-slate-200 dark:hover:bg-slate-700`}>
-                  <XMarkIcon className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="overflow-y-auto p-6">
-                {/* To keep it simple without circular dependencies, the user can navigate to the full batches page, or we just instruct them */}
-                <p className={`mb-4 ${colors.text.primary}`}>For detailed batch management, please use the <strong>Batches</strong> tab at the top of the inventory page.</p>
-                <button onClick={() => setShowBatchModal(false)} className="px-4 py-2 bg-blue-600 text-white rounded-lg">Close</button>
-              </div>
-            </div>
-          </div>
-        </ModalPortal>
+        <ProductBatchesModal
+          product={selectedProductForBatch}
+          onClose={() => {
+            setShowBatchModal(false);
+            setSelectedProductForBatch(null);
+          }}
+          onChanged={() => {
+            // Reload the products list so on-hand quantities reflect new/edited/deleted batches
+            loadProducts();
+          }}
+        />
       )}
 
       {/* Stock Adjustment Modal */}

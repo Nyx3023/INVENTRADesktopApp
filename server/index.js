@@ -87,15 +87,15 @@ const ACTIVITY_ACTIONS = {
   CREATE_PURCHASE_ORDER: 'CREATE_PURCHASE_ORDER',
   RECEIVE_PURCHASE_ORDER: 'RECEIVE_PURCHASE_ORDER',
   CANCEL_PURCHASE_ORDER: 'CANCEL_PURCHASE_ORDER',
-  CREATE_PURCHASE_ORDER: 'CREATE_PURCHASE_ORDER',
-  RECEIVE_PURCHASE_ORDER: 'RECEIVE_PURCHASE_ORDER',
-  CANCEL_PURCHASE_ORDER: 'CANCEL_PURCHASE_ORDER',
   CREATE_USER: 'CREATE_USER',
   UPDATE_USER: 'UPDATE_USER',
   DELETE_USER: 'DELETE_USER',
   CREATE_AUDIT: 'CREATE_AUDIT',
   UPDATE_SETTINGS: 'UPDATE_SETTINGS',
   PRINT_RECEIPT: 'PRINT_RECEIPT',
+  CREATE_INVENTORY_BATCH: 'CREATE_INVENTORY_BATCH',
+  UPDATE_INVENTORY_BATCH: 'UPDATE_INVENTORY_BATCH',
+  DELETE_INVENTORY_BATCH: 'DELETE_INVENTORY_BATCH',
 };
 
 // Activity logs table is created by schema initialization
@@ -919,18 +919,88 @@ app.get('/api/products/inventory-valuation', async (req, res) => {
   }
 });
 
-// Get all inventory batches
+// ────────────────────────────────────────────────────────────
+// Inventory batch helpers (display status / row mapper)
+// ────────────────────────────────────────────────────────────
+
+// Compute display status & days-until-expiry for a batch row
+function computeBatchDisplayStatus({ status, quantity, expiryDate }) {
+  const qty = Number(quantity) || 0;
+  if (status === 'depleted' || qty <= 0) {
+    return { displayStatus: 'depleted', daysUntilExpiry: null };
+  }
+  if (!expiryDate) {
+    return { displayStatus: 'active', daysUntilExpiry: null };
+  }
+  const exp = new Date(expiryDate);
+  if (Number.isNaN(exp.getTime())) {
+    return { displayStatus: 'active', daysUntilExpiry: null };
+  }
+  // Compare in days at local midnight precision
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const startOfExp = new Date(exp.getFullYear(), exp.getMonth(), exp.getDate());
+  const days = Math.round((startOfExp - startOfToday) / (1000 * 60 * 60 * 24));
+  let displayStatus = 'active';
+  if (days < 0) displayStatus = 'expired';
+  else if (days <= 3) displayStatus = 'critical';
+  else if (days <= 7) displayStatus = 'near_expiry';
+  return { displayStatus, daysUntilExpiry: days };
+}
+
+function mapBatchRow(row) {
+  const { displayStatus, daysUntilExpiry } = computeBatchDisplayStatus({
+    status: row.status,
+    quantity: row.quantity,
+    expiryDate: row.expiry_date,
+  });
+  return {
+    id: row.id,
+    productId: row.product_id,
+    productName: row.product_name,
+    categoryName: row.category_name,
+    batchNumber: row.batch_number,
+    quantity: row.quantity,
+    initialQuantity: row.initial_quantity,
+    unitCost: row.unit_cost,
+    expiryDate: row.expiry_date,
+    receivedDate: row.received_date,
+    supplierId: row.supplier_id,
+    supplierName: row.supplier_name,
+    notes: row.notes,
+    storageLocation: row.storage_location,
+    status: row.status,
+    displayStatus,
+    daysUntilExpiry,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// Get all inventory batches (with filters, search, sort)
 app.get('/api/inventory-batches', async (req, res) => {
   try {
-    const { productId } = req.query;
-    
+    const {
+      productId,
+      status,           // 'active' | 'depleted'
+      displayStatus,    // 'active' | 'near_expiry' | 'critical' | 'expired'
+      expiryFrom,
+      expiryTo,
+      search,
+      sort = 'received_desc', // 'expiry_asc' | 'expiry_desc' | 'received_asc' | 'received_desc'
+      limit,
+    } = req.query;
+
     let query = `
-      SELECT 
-        ib.id, ib.product_id, ib.batch_number, ib.quantity, ib.unit_cost, 
-        ib.expiry_date, ib.status, ib.created_at, ib.updated_at,
-        p.name as product_name, p.category_name
+      SELECT
+        ib.id, ib.product_id, ib.batch_number, ib.quantity, ib.initial_quantity,
+        ib.unit_cost, ib.expiry_date, ib.received_date, ib.supplier_id,
+        ib.notes, ib.storage_location, ib.status, ib.created_at, ib.updated_at,
+        p.name AS product_name, p.category_name,
+        s.name AS supplier_name
       FROM inventory_batches ib
       JOIN products p ON ib.product_id = p.id
+      LEFT JOIN suppliers s ON s.id = ib.supplier_id
       WHERE p.deleted_at IS NULL
     `;
     const params = [];
@@ -940,31 +1010,583 @@ app.get('/api/inventory-batches', async (req, res) => {
       params.push(productId);
     }
 
-    query += ` ORDER BY ib.created_at DESC`;
+    if (status) {
+      query += ` AND ib.status = ?`;
+      params.push(status);
+    }
+
+    if (expiryFrom) {
+      query += ` AND ib.expiry_date IS NOT NULL AND date(ib.expiry_date) >= date(?)`;
+      params.push(expiryFrom);
+    }
+
+    if (expiryTo) {
+      query += ` AND ib.expiry_date IS NOT NULL AND date(ib.expiry_date) <= date(?)`;
+      params.push(expiryTo);
+    }
+
+    if (search) {
+      query += ` AND (LOWER(p.name) LIKE LOWER(?) OR LOWER(COALESCE(ib.batch_number, '')) LIKE LOWER(?) OR LOWER(ib.id) LIKE LOWER(?))`;
+      const like = `%${search}%`;
+      params.push(like, like, like);
+    }
+
+    // Sorting
+    switch (sort) {
+      case 'expiry_asc':
+        // Put NULL expiry dates last (active-with-no-expiry shouldn't trigger near-expiry sort)
+        query += ` ORDER BY CASE WHEN ib.expiry_date IS NULL OR ib.expiry_date = '' THEN 1 ELSE 0 END, ib.expiry_date ASC, ib.created_at DESC`;
+        break;
+      case 'expiry_desc':
+        query += ` ORDER BY CASE WHEN ib.expiry_date IS NULL OR ib.expiry_date = '' THEN 1 ELSE 0 END, ib.expiry_date DESC, ib.created_at DESC`;
+        break;
+      case 'received_asc':
+        query += ` ORDER BY ib.received_date ASC, ib.created_at ASC`;
+        break;
+      case 'received_desc':
+      default:
+        query += ` ORDER BY ib.received_date DESC, ib.created_at DESC`;
+    }
 
     const [rows] = execute(query, params);
-    
-    // Map snake_case to camelCase for frontend
-    const mappedRows = rows.map(row => ({
-      id: row.id,
-      productId: row.product_id,
-      productName: row.product_name,
-      categoryName: row.category_name,
-      batchNumber: row.batch_number,
-      quantity: row.quantity,
-      unitCost: row.unit_cost,
-      expiryDate: row.expiry_date,
-      status: row.status,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
-    }));
 
-    res.json(mappedRows);
+    // Map + filter by computed displayStatus (post-query, since it's derived)
+    let mapped = rows.map(mapBatchRow);
+    if (displayStatus) {
+      mapped = mapped.filter((b) => b.displayStatus === displayStatus);
+    }
+
+    // Apply limit (after filter)
+    const lim = Number.parseInt(limit, 10);
+    if (Number.isFinite(lim) && lim > 0) {
+      mapped = mapped.slice(0, lim);
+    }
+
+    res.json(mapped);
   } catch (error) {
     console.error('Error fetching inventory batches:', error);
     res.status(500).json({ error: 'Failed to fetch inventory batches' });
   }
 });
+
+// Aggregate batch status counts (all products, not affected by list filters) — for dashboard-style summary modals
+app.get('/api/inventory-batches/stats', async (req, res) => {
+  try {
+    const [rows] = execute(
+      `SELECT ib.id, ib.product_id, ib.quantity, ib.status, ib.expiry_date
+       FROM inventory_batches ib
+       JOIN products p ON p.id = ib.product_id
+       WHERE p.deleted_at IS NULL`
+    );
+    const counts = { active: 0, near_expiry: 0, critical: 0, expired: 0, depleted: 0 };
+    const productIds = new Set();
+    for (const row of rows || []) {
+      productIds.add(row.product_id);
+      const { displayStatus } = computeBatchDisplayStatus({
+        status: row.status,
+        quantity: row.quantity,
+        expiryDate: row.expiry_date,
+      });
+      counts[displayStatus] = (counts[displayStatus] || 0) + 1;
+    }
+    res.json({
+      totalBatches: rows?.length || 0,
+      productsWithBatches: productIds.size,
+      byStatus: counts,
+    });
+  } catch (error) {
+    console.error('Error fetching batch stats:', error);
+    res.status(500).json({ error: 'Failed to fetch batch stats' });
+  }
+});
+
+// Get a single inventory batch by id
+app.get('/api/inventory-batches/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = execute(
+      `SELECT
+        ib.id, ib.product_id, ib.batch_number, ib.quantity, ib.initial_quantity,
+        ib.unit_cost, ib.expiry_date, ib.received_date, ib.supplier_id,
+        ib.notes, ib.storage_location, ib.status, ib.created_at, ib.updated_at,
+        p.name AS product_name, p.category_name,
+        s.name AS supplier_name
+      FROM inventory_batches ib
+      JOIN products p ON ib.product_id = p.id
+      LEFT JOIN suppliers s ON s.id = ib.supplier_id
+      WHERE ib.id = ?`,
+      [id]
+    );
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'Batch not found' });
+    }
+    res.json(mapBatchRow(rows[0]));
+  } catch (error) {
+    console.error('Error fetching inventory batch:', error);
+    res.status(500).json({ error: 'Failed to fetch inventory batch' });
+  }
+});
+
+// Validate shared batch payload (expiry > received, etc.)
+function validateBatchSharedFields({ receivedDate, expiryDate }) {
+  if (!receivedDate) {
+    return 'Received date is required';
+  }
+  if (expiryDate) {
+    const recv = new Date(receivedDate);
+    const exp = new Date(expiryDate);
+    if (Number.isNaN(recv.getTime()) || Number.isNaN(exp.getTime())) {
+      return 'Invalid date format';
+    }
+    if (exp <= recv) {
+      return 'Expiry date must be later than received date';
+    }
+  }
+  return null;
+}
+
+// Create one or more inventory batches (one row per product, sharing batch metadata)
+app.post('/api/inventory-batches', async (req, res) => {
+  try {
+    const {
+      products: productItems,
+      batchNumber,
+      receivedDate,
+      expiryDate,
+      supplierId,
+      notes,
+      storageLocation,
+    } = req.body || {};
+
+    if (!Array.isArray(productItems) || productItems.length === 0) {
+      return res.status(400).json({ error: 'At least one product is required' });
+    }
+
+    // Per-row validation
+    for (const item of productItems) {
+      if (!item?.productId) {
+        return res.status(400).json({ error: 'Each row must have a product' });
+      }
+      const qty = Number.parseInt(item.quantity, 10);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        return res.status(400).json({ error: 'Quantity must be a positive number' });
+      }
+    }
+
+    const sharedError = validateBatchSharedFields({ receivedDate, expiryDate });
+    if (sharedError) {
+      return res.status(400).json({ error: sharedError });
+    }
+
+    const trimmedBatchNumber = normalizeOptionalText(batchNumber);
+    const normalizedReceived = normalizeOptionalDate(receivedDate);
+    const normalizedExpiry = normalizeOptionalDate(expiryDate);
+    const normalizedSupplier = normalizeOptionalText(supplierId);
+    const normalizedNotes = normalizeOptionalText(notes);
+    const normalizedStorage = normalizeOptionalText(storageLocation);
+
+    const created = await withTransaction(async (connection) => {
+      const insertedIds = [];
+      for (const item of productItems) {
+        const qty = Number.parseInt(item.quantity, 10);
+        const unitCost = Number(item.unitCost) || 0;
+        // Verify product exists
+        const [productRows] = connection.execute(
+          'SELECT id, name, quantity FROM products WHERE id = ? AND deleted_at IS NULL',
+          [item.productId]
+        );
+        if (!productRows || productRows.length === 0) {
+          throw new Error(`Product not found: ${item.productId}`);
+        }
+        const batchId = uuidv4();
+        connection.execute(
+          `INSERT INTO inventory_batches (
+            id, product_id, batch_number, quantity, initial_quantity,
+            unit_cost, expiry_date, received_date, supplier_id, notes, storage_location,
+            source_type, source_id, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', NULL, 'active')`,
+          [
+            batchId,
+            item.productId,
+            trimmedBatchNumber,
+            qty,
+            qty,
+            unitCost,
+            normalizedExpiry,
+            normalizedReceived,
+            normalizedSupplier,
+            normalizedNotes,
+            normalizedStorage,
+          ]
+        );
+        // Bump product's on-hand quantity
+        connection.execute(
+          'UPDATE products SET quantity = quantity + ? WHERE id = ?',
+          [qty, item.productId]
+        );
+        insertedIds.push({ id: batchId, productId: item.productId, productName: productRows[0].name });
+      }
+      return insertedIds;
+    });
+
+    const userInfo = getUserFromRequest(req);
+    logActivity({
+      userId: userInfo.id,
+      userName: userInfo.name,
+      userEmail: userInfo.email,
+      action: 'CREATE_INVENTORY_BATCH',
+      entityType: 'inventory_batch',
+      entityId: created.map((c) => c.id).join(','),
+      details: {
+        batchNumber: trimmedBatchNumber,
+        products: created,
+        receivedDate: normalizedReceived,
+        expiryDate: normalizedExpiry,
+      },
+    });
+
+    res.status(201).json({ success: true, created });
+  } catch (error) {
+    console.error('Error creating inventory batch:', error);
+    res.status(500).json({ error: error.message || 'Failed to create inventory batch' });
+  }
+});
+
+// Update an existing inventory batch
+app.put('/api/inventory-batches/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      batchNumber,
+      quantity,
+      unitCost,
+      receivedDate,
+      expiryDate,
+      supplierId,
+      notes,
+      storageLocation,
+    } = req.body || {};
+
+    const newQty = Number.parseInt(quantity, 10);
+    if (!Number.isFinite(newQty) || newQty < 0) {
+      return res.status(400).json({ error: 'Quantity must be a non-negative number' });
+    }
+
+    const sharedError = validateBatchSharedFields({ receivedDate, expiryDate });
+    if (sharedError) {
+      return res.status(400).json({ error: sharedError });
+    }
+
+    const result = await withTransaction(async (connection) => {
+      const [rows] = connection.execute(
+        'SELECT id, product_id, quantity FROM inventory_batches WHERE id = ?',
+        [id]
+      );
+      if (!rows || rows.length === 0) {
+        const err = new Error('Batch not found');
+        err.statusCode = 404;
+        throw err;
+      }
+      const existing = rows[0];
+      const oldQty = Number(existing.quantity) || 0;
+      const delta = newQty - oldQty;
+      const newStatus = newQty <= 0 ? 'depleted' : 'active';
+
+      connection.execute(
+        `UPDATE inventory_batches SET
+          batch_number = ?, quantity = ?, unit_cost = ?,
+          received_date = ?, expiry_date = ?, supplier_id = ?,
+          notes = ?, storage_location = ?, status = ?,
+          updated_at = datetime('now')
+        WHERE id = ?`,
+        [
+          normalizeOptionalText(batchNumber),
+          newQty,
+          Number(unitCost) || 0,
+          normalizeOptionalDate(receivedDate),
+          normalizeOptionalDate(expiryDate),
+          normalizeOptionalText(supplierId),
+          normalizeOptionalText(notes),
+          normalizeOptionalText(storageLocation),
+          newStatus,
+          id,
+        ]
+      );
+
+      if (delta !== 0) {
+        connection.execute(
+          'UPDATE products SET quantity = quantity + ? WHERE id = ?',
+          [delta, existing.product_id]
+        );
+      }
+
+      // If expiry has changed, drop stale notifications so the daily job can re-evaluate
+      connection.execute('DELETE FROM notifications WHERE batch_id = ?', [id]);
+
+      return { id, productId: existing.product_id, oldQty, newQty };
+    });
+
+    const userInfo = getUserFromRequest(req);
+    const [nameRows] = execute('SELECT name FROM products WHERE id = ?', [result.productId]);
+    const productName = nameRows?.[0]?.name;
+    logActivity({
+      userId: userInfo.id,
+      userName: userInfo.name,
+      userEmail: userInfo.email,
+      action: 'UPDATE_INVENTORY_BATCH',
+      entityType: 'inventory_batch',
+      entityId: id,
+      details: { ...result, productName },
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error updating inventory batch:', error);
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Failed to update inventory batch' });
+  }
+});
+
+// Delete an inventory batch (soft: set quantity=0, status=depleted, deduct from product)
+app.delete('/api/inventory-batches/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await withTransaction(async (connection) => {
+      const [rows] = connection.execute(
+        `SELECT ib.id, ib.product_id, ib.quantity, p.name AS product_name
+         FROM inventory_batches ib
+         JOIN products p ON p.id = ib.product_id
+         WHERE ib.id = ?`,
+        [id]
+      );
+      if (!rows || rows.length === 0) {
+        const err = new Error('Batch not found');
+        err.statusCode = 404;
+        throw err;
+      }
+      const existing = rows[0];
+      const oldQty = Number(existing.quantity) || 0;
+
+      connection.execute(
+        `UPDATE inventory_batches SET quantity = 0, status = 'depleted', updated_at = datetime('now') WHERE id = ?`,
+        [id]
+      );
+      if (oldQty > 0) {
+        connection.execute(
+          'UPDATE products SET quantity = MAX(0, quantity - ?) WHERE id = ?',
+          [oldQty, existing.product_id]
+        );
+      }
+      connection.execute('DELETE FROM notifications WHERE batch_id = ?', [id]);
+      return {
+        id,
+        productId: existing.product_id,
+        productName: existing.product_name,
+        deductedQty: oldQty,
+      };
+    });
+
+    const userInfo = getUserFromRequest(req);
+    logActivity({
+      userId: userInfo.id,
+      userName: userInfo.name,
+      userEmail: userInfo.email,
+      action: 'DELETE_INVENTORY_BATCH',
+      entityType: 'inventory_batch',
+      entityId: id,
+      details: { ...result, reason: 'Batch deleted' },
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error deleting inventory batch:', error);
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Failed to delete inventory batch' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// Notifications API (batch expiry alerts and future types)
+// ────────────────────────────────────────────────────────────
+
+function mapNotificationRow(row) {
+  return {
+    id: row.id,
+    type: row.type,
+    severity: row.severity,
+    batchId: row.batch_id,
+    productId: row.product_id,
+    productName: row.product_name,
+    batchNumber: row.batch_number,
+    expiryDate: row.expiry_date,
+    title: row.title,
+    message: row.message,
+    isRead: !!row.is_read,
+    readAt: row.read_at,
+    createdAt: row.created_at,
+  };
+}
+
+app.get('/api/notifications', async (req, res) => {
+  try {
+    const { unreadOnly, severity, limit, type, category } = req.query;
+    let query = `
+      SELECT n.*, p.name AS product_name, ib.batch_number, ib.expiry_date
+      FROM notifications n
+      LEFT JOIN inventory_batches ib ON ib.id = n.batch_id
+      LEFT JOIN products p ON p.id = n.product_id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (unreadOnly === '1' || unreadOnly === 'true') {
+      query += ` AND n.is_read = 0`;
+    }
+    if (type) {
+      query += ` AND n.type = ?`;
+      params.push(type);
+    } else if (category === 'expiry') {
+      query += ` AND n.type = 'expiry'`;
+    } else if (category === 'other') {
+      query += ` AND n.type IS NOT NULL AND n.type != 'expiry'`;
+    }
+    if (severity) {
+      query += ` AND n.severity = ?`;
+      params.push(severity);
+    }
+    query += ` ORDER BY n.created_at DESC`;
+    const lim = Number.parseInt(limit, 10);
+    if (Number.isFinite(lim) && lim > 0) {
+      query += ` LIMIT ${lim}`;
+    }
+    const [rows] = execute(query, params);
+    res.json(rows.map(mapNotificationRow));
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+app.get('/api/notifications/unread-count', async (req, res) => {
+  try {
+    const [rows] = execute('SELECT COUNT(*) AS count FROM notifications WHERE is_read = 0');
+    const total = rows?.[0]?.count ?? 0;
+    const [bySeverity] = execute(
+      `SELECT severity, COUNT(*) AS count FROM notifications WHERE is_read = 0 GROUP BY severity`
+    );
+    const counts = { near_expiry: 0, critical: 0, expired: 0 };
+    for (const row of bySeverity || []) {
+      counts[row.severity] = row.count;
+    }
+    const [byTypeRows] = execute(
+      `SELECT type, COUNT(*) AS count FROM notifications WHERE is_read = 0 GROUP BY type`
+    );
+    const byType = {};
+    for (const row of byTypeRows || []) {
+      if (row.type) byType[row.type] = row.count;
+    }
+    res.json({ total, ...counts, byType });
+  } catch (error) {
+    console.error('Error fetching unread notification count:', error);
+    res.status(500).json({ error: 'Failed to fetch unread count' });
+  }
+});
+
+app.patch('/api/notifications/:id/read', async (req, res) => {
+  try {
+    execute(
+      `UPDATE notifications SET is_read = 1, read_at = datetime('now') WHERE id = ?`,
+      [req.params.id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    res.status(500).json({ error: 'Failed to mark as read' });
+  }
+});
+
+app.patch('/api/notifications/read-all', async (req, res) => {
+  try {
+    execute(
+      `UPDATE notifications SET is_read = 1, read_at = datetime('now') WHERE is_read = 0`
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error marking all notifications as read:', error);
+    res.status(500).json({ error: 'Failed to mark all as read' });
+  }
+});
+
+app.delete('/api/notifications/:id', async (req, res) => {
+  try {
+    execute('DELETE FROM notifications WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    res.status(500).json({ error: 'Failed to delete notification' });
+  }
+});
+
+// Daily background job: scan inventory_batches and create expiry notifications
+function checkExpiringBatches() {
+  try {
+    const [rows] = execute(`
+      SELECT ib.id, ib.product_id, ib.batch_number, ib.expiry_date,
+             p.name AS productName,
+             CAST(julianday(date(ib.expiry_date)) - julianday(date('now','localtime')) AS INTEGER) AS days
+      FROM inventory_batches ib
+      JOIN products p ON p.id = ib.product_id
+      WHERE ib.status = 'active'
+        AND ib.quantity > 0
+        AND ib.expiry_date IS NOT NULL
+        AND p.deleted_at IS NULL
+    `);
+
+    let inserted = 0;
+    for (const r of rows || []) {
+      let severity = null;
+      if (r.days < 0) severity = 'expired';
+      else if (r.days <= 3) severity = 'critical'; // covers 1-day and 3-day buckets
+      else if (r.days <= 7) severity = 'near_expiry';
+      if (!severity) continue;
+
+      const batchLabel = r.batch_number || r.id.slice(0, 8);
+      const message = severity === 'expired'
+        ? `Batch #${batchLabel} of '${r.productName}' has expired.`
+        : `Batch #${batchLabel} of '${r.productName}' will expire in ${r.days} day${r.days === 1 ? '' : 's'}.`;
+      const title = severity === 'expired' ? 'Batch expired' : 'Batch expiring soon';
+
+      try {
+        const [result] = execute(
+          `INSERT OR IGNORE INTO notifications (id, type, severity, batch_id, product_id, title, message)
+           VALUES (?, 'expiry', ?, ?, ?, ?, ?)`,
+          [uuidv4(), severity, r.id, r.product_id, title, message]
+        );
+        if (result?.affectedRows > 0) {
+          inserted += 1;
+          // Best-effort socket push (front-end can listen and refresh)
+          try {
+            io.emit('notification:new', {
+              id: r.id,
+              severity,
+              title,
+              message,
+              batchId: r.id,
+              productId: r.product_id,
+            });
+          } catch (_) { /* ignore broadcast errors */ }
+        }
+      } catch (innerErr) {
+        // UNIQUE constraint will already be respected by INSERT OR IGNORE; log anything else
+        console.warn('checkExpiringBatches: insert skipped', innerErr?.message);
+      }
+    }
+    if (inserted > 0) {
+      console.log(`checkExpiringBatches: created ${inserted} new expiry notification(s)`);
+    }
+  } catch (error) {
+    console.error('checkExpiringBatches failed:', error);
+  }
+}
 
 // Create a product
 app.post('/api/products', async (req, res) => {
@@ -4073,6 +4695,10 @@ async function startServer() {
 
     cleanupOrphanedImages();
     setInterval(cleanupOrphanedImages, 6 * 60 * 60 * 1000);
+
+    // Daily batch-expiry alert scan
+    checkExpiringBatches();
+    setInterval(checkExpiringBatches, 24 * 60 * 60 * 1000);
 
     server.listen(PORT, () => {
       console.log(`Server & WebSocket are running on port ${PORT}`);

@@ -275,9 +275,47 @@ export async function initializeDatabase() {
         received_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         source_type TEXT,
         source_id TEXT,
+        supplier_id TEXT,
+        notes TEXT,
+        storage_location TEXT,
         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'depleted')),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Ensure batch management columns exist on legacy databases
+    const inventoryBatchCompatibilityColumns = [
+      { name: 'supplier_id', sql: `ALTER TABLE inventory_batches ADD COLUMN supplier_id TEXT;` },
+      { name: 'notes', sql: `ALTER TABLE inventory_batches ADD COLUMN notes TEXT;` },
+      { name: 'storage_location', sql: `ALTER TABLE inventory_batches ADD COLUMN storage_location TEXT;` },
+    ];
+    for (const col of inventoryBatchCompatibilityColumns) {
+      try {
+        db.exec(col.sql);
+        console.log(`Added ${col.name} column to inventory_batches table`);
+      } catch (e) {
+        if (!e.message.includes('duplicate column name')) {
+          console.error(`Error adding ${col.name} column to inventory_batches:`, e);
+        }
+      }
+    }
+
+    // Notifications table for batch expiry alerts (and future notification types)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        batch_id TEXT,
+        product_id TEXT,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        read_at DATETIME,
+        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
       )
     `);
@@ -392,6 +430,10 @@ export async function initializeDatabase() {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_batches_product_fifo ON inventory_batches(product_id, received_date, id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_batches_expiry ON inventory_batches(expiry_date)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_batches_status ON inventory_batches(status)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_batches_supplier ON inventory_batches(supplier_id)`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_unique_alert ON notifications(batch_id, severity)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(is_read, created_at)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_severity ON notifications(severity)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox(status, created_at)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_activity_logs_action ON activity_logs(action)`);

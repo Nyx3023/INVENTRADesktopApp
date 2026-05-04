@@ -58,6 +58,9 @@ const ACTION_ICONS = {
   CREATE_AUDIT: ClipboardDocumentListIcon,
   UPDATE_SETTINGS: Cog6ToothIcon,
   PRINT_RECEIPT: PrinterIcon,
+  CREATE_INVENTORY_BATCH: PlusIcon,
+  UPDATE_INVENTORY_BATCH: PencilIcon,
+  DELETE_INVENTORY_BATCH: TrashIcon,
 };
 
 // Action color mapping
@@ -90,6 +93,9 @@ const ACTION_COLORS = {
   CREATE_AUDIT: 'text-sky-600 bg-sky-100 dark:text-sky-400 dark:bg-sky-900/30',
   UPDATE_SETTINGS: 'text-slate-600 bg-slate-100 dark:text-slate-400 dark:bg-slate-900/30',
   PRINT_RECEIPT: 'text-cyan-600 bg-cyan-100 dark:text-cyan-400 dark:bg-cyan-900/30',
+  CREATE_INVENTORY_BATCH: 'text-emerald-600 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-900/30',
+  UPDATE_INVENTORY_BATCH: 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30',
+  DELETE_INVENTORY_BATCH: 'text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-900/30',
 };
 
 const formatActionName = (action) => {

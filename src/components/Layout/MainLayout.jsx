@@ -27,6 +27,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { ClockIcon } from '@heroicons/react/24/outline';
 import { JBO_LOGO } from '../../utils/logo';
+import NotificationCenter from '../Notifications/NotificationCenter';
 // Removed cloud sync indicators
 
 const MainLayout = () => {
@@ -310,6 +311,8 @@ const MainLayout = () => {
               <span className={`text-sm font-semibold`}>{currentDateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               <span className={`text-[10px] text-white/80`}>{currentDateTime.toLocaleDateString()}</span>
             </div>
+            {/* Notifications (all types; expiry alerts link to batches) */}
+            <NotificationCenter />
             {/* Activity Logs (Admin Only) */}
             {user?.role === 'admin' && (
               <Link

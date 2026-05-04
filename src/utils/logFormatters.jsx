@@ -122,6 +122,22 @@ export const formatDetailsForTable = (log) => {
       case 'PRINT_RECEIPT':
         return `Printed receipt${details.receipt_number ? ` #${details.receipt_number}` : ''}`;
 
+      case 'CREATE_INVENTORY_BATCH': {
+        const n = Array.isArray(details.products) ? details.products.length : 0;
+        const bn = details.batchNumber ? `#${details.batchNumber}` : 'new batch';
+        return `Created batch ${bn}${n ? ` (${n} product row${n === 1 ? '' : 's'})` : ''}`;
+      }
+
+      case 'UPDATE_INVENTORY_BATCH': {
+        const pn = details.productName || 'product';
+        return `Updated batch for "${pn}" (${details.oldQty ?? '?'} → ${details.newQty ?? '?'} units)`;
+      }
+
+      case 'DELETE_INVENTORY_BATCH': {
+        const pn = details.productName || 'product';
+        return `Removed batch for "${pn}"${details.deductedQty != null ? ` (${details.deductedQty} units)` : ''}`;
+      }
+
       default: {
         // Generic human-readable fallback
         if (details.message) return details.message;
@@ -312,6 +328,32 @@ export const formatDetailsForModal = (log) => {
         return renderList([
           details.receipt_number ? `Receipt: ${details.receipt_number}` : null,
           details.printer ? `Printer: ${details.printer}` : null,
+        ].filter(Boolean));
+
+      case 'CREATE_INVENTORY_BATCH':
+        return renderList([
+          details.batchNumber ? `Batch #: ${details.batchNumber}` : null,
+          details.receivedDate ? `Received: ${details.receivedDate}` : null,
+          details.expiryDate ? `Expiry: ${details.expiryDate}` : null,
+          Array.isArray(details.products)
+            ? `Products: ${details.products.map((p) => p.productName || p.productId || '?').join(', ')}`
+            : null,
+        ].filter(Boolean));
+
+      case 'UPDATE_INVENTORY_BATCH':
+        return renderList([
+          details.productName ? `Product: ${details.productName}` : null,
+          details.oldQty !== undefined && details.newQty !== undefined
+            ? `Quantity: ${details.oldQty} → ${details.newQty}`
+            : null,
+          details.id ? `Batch id: ${details.id}` : null,
+        ].filter(Boolean));
+
+      case 'DELETE_INVENTORY_BATCH':
+        return renderList([
+          details.productName ? `Product: ${details.productName}` : null,
+          details.deductedQty != null ? `Deducted from stock: ${details.deductedQty}` : null,
+          details.reason ? `Reason: ${details.reason}` : null,
         ].filter(Boolean));
 
       default: {

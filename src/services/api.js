@@ -596,7 +596,90 @@ export const inventoryBatchService = {
       return nativeCall('inventoryBatches', 'list', { productId });
     }
     return fetchJson(`${API_URL}/inventory-batches?productId=${productId}`);
-  }
+  },
+
+  getById: async (id) => {
+    if (hasNativeBridge) {
+      return nativeCall('inventoryBatches', 'get', { id });
+    }
+    return fetchJson(`${API_URL}/inventory-batches/${id}`);
+  },
+
+  create: async (payload) => {
+    if (hasNativeBridge) {
+      return nativeCall('inventoryBatches', 'create', payload);
+    }
+    return fetchJson(`${API_URL}/inventory-batches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  },
+
+  update: async (id, payload) => {
+    if (hasNativeBridge) {
+      return nativeCall('inventoryBatches', 'update', { id, ...payload });
+    }
+    return fetchJson(`${API_URL}/inventory-batches/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  },
+
+  delete: async (id) => {
+    if (hasNativeBridge) {
+      return nativeCall('inventoryBatches', 'delete', { id });
+    }
+    return fetchJson(`${API_URL}/inventory-batches/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  /** Global batch counts by display status (not affected by list filters). */
+  getStats: async () => {
+    if (hasNativeBridge) {
+      return nativeCall('inventoryBatches', 'stats', {});
+    }
+    return fetchJson(`${API_URL}/inventory-batches/stats`);
+  },
+};
+
+export const notificationService = {
+  list: async (params = {}) => {
+    if (hasNativeBridge) {
+      return nativeCall('notifications', 'list', params);
+    }
+    return fetchJson(`${API_URL}/notifications${toQueryString(params)}`);
+  },
+
+  unreadCount: async () => {
+    if (hasNativeBridge) {
+      return nativeCall('notifications', 'unreadCount');
+    }
+    return fetchJson(`${API_URL}/notifications/unread-count`);
+  },
+
+  markRead: async (id) => {
+    if (hasNativeBridge) {
+      return nativeCall('notifications', 'markRead', { id });
+    }
+    return fetchJson(`${API_URL}/notifications/${id}/read`, { method: 'PATCH' });
+  },
+
+  markAllRead: async () => {
+    if (hasNativeBridge) {
+      return nativeCall('notifications', 'markAllRead');
+    }
+    return fetchJson(`${API_URL}/notifications/read-all`, { method: 'PATCH' });
+  },
+
+  remove: async (id) => {
+    if (hasNativeBridge) {
+      return nativeCall('notifications', 'delete', { id });
+    }
+    return fetchJson(`${API_URL}/notifications/${id}`, { method: 'DELETE' });
+  },
 };
 
 export const stockAdjustmentService = {

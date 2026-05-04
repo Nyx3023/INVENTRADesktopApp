@@ -1,4 +1,5 @@
-import { useState, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth, usePermissions } from '../../context/AuthContext';
 import {
@@ -29,7 +30,22 @@ const InventoryPageWrapper = () => {
   const { colors } = useTheme();
   const { user } = useAuth();
   const { hasPermission } = usePermissions();
-  const [activeTab, setActiveTab] = useState('products');
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = params.get('tab');
+    return tab || 'products';
+  });
+
+  // React to URL ?tab= changes (e.g. from notification deep links)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = params.get('tab');
+    if (tab && tab !== activeTab) {
+      setActiveTab(tab);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
 
   const tabs = [
     { id: 'products', name: 'Products', icon: CubeIcon, permission: 'view_inventory' },

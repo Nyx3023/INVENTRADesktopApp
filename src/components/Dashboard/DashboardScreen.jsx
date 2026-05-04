@@ -20,6 +20,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useSettings } from '../../context/SettingsContext';
 import { formatCurrency } from '../../utils/formatters';
 import LazyPageLoader from '../common/LazyPageLoader';
+import TopExpiringBatches from './TopExpiringBatches';
 
 import {
   Chart as ChartJS,
@@ -413,6 +414,9 @@ const DashboardScreen = () => {
               </div>
             )}
           </div>
+
+          {/* Top 5 Expiring Batches */}
+          <TopExpiringBatches />
 
           {/* System Alerts */}
           <div className={`${colors.card.primary} rounded-2xl shadow-sm border ${colors.border.primary} p-5 flex-1`}>
