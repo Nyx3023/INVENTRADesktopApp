@@ -173,6 +173,7 @@ function addInventoryBatch(connection, {
   batchNumber = null,
   expiryDate = null,
   unitCost = 0,
+  unitPrice = null,
   sourceType = null,
   sourceId = null,
 }) {
@@ -180,11 +181,16 @@ function addInventoryBatch(connection, {
   if (!productId || qty <= 0) return null;
 
   const batchId = uuidv4();
+  const sell =
+    unitPrice != null && unitPrice !== '' && Number.isFinite(Number(unitPrice))
+      ? Number(unitPrice)
+      : null;
   connection.execute(
     `INSERT INTO inventory_batches (
       id, product_id, batch_number, quantity, initial_quantity,
-      unit_cost, expiry_date, source_type, source_id, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      unit_cost, unit_price, expiry_date, received_date, supplier_id, notes, storage_location,
+      source_type, source_id, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), NULL, NULL, NULL, ?, ?, 'active')`,
     [
       batchId,
       productId,
@@ -192,9 +198,54 @@ function addInventoryBatch(connection, {
       qty,
       qty,
       Number(unitCost) || 0,
+      sell,
       normalizeOptionalDate(expiryDate),
       normalizeOptionalText(sourceType),
       normalizeOptionalText(sourceId),
+    ]
+  );
+  return batchId;
+}
+
+/** Opening batch for a new product — allows qty 0 (depleted row) so every product has a batch row. */
+function insertOpeningInventoryBatch(connection, {
+  productId,
+  batchNumber,
+  quantity,
+  expiryDate = null,
+  unitCost = 0,
+  unitPrice = null,
+  sourceType = 'initial_stock',
+  sourceId = null,
+}) {
+  if (!productId) return null;
+  const trimmed = normalizeOptionalText(batchNumber);
+  if (!trimmed) return null;
+  const qty = Math.max(0, Number.parseInt(quantity, 10) || 0);
+  const batchId = uuidv4();
+  const status = qty > 0 ? 'active' : 'depleted';
+  const sell =
+    unitPrice != null && unitPrice !== '' && Number.isFinite(Number(unitPrice))
+      ? Number(unitPrice)
+      : null;
+  connection.execute(
+    `INSERT INTO inventory_batches (
+      id, product_id, batch_number, quantity, initial_quantity,
+      unit_cost, unit_price, expiry_date, received_date, supplier_id, notes, storage_location,
+      source_type, source_id, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), NULL, NULL, NULL, ?, ?, ?)`,
+    [
+      batchId,
+      productId,
+      trimmed,
+      qty,
+      qty,
+      Number(unitCost) || 0,
+      sell,
+      normalizeOptionalDate(expiryDate),
+      normalizeOptionalText(sourceType),
+      normalizeOptionalText(sourceId),
+      status,
     ]
   );
   return batchId;
@@ -858,7 +909,7 @@ app.get('/api/products', async (req, res) => {
       'FROM products WHERE deleted_at IS NULL'
     );
     console.log('Products fetched:', rows);
-    res.json(rows);
+    res.json(enrichProductsWithFifoBatches(rows));
   } catch (error) {
     console.error('Error fetching products:', error);
     res.status(500).json({ error: 'Failed to fetch products' });
@@ -954,6 +1005,13 @@ function mapBatchRow(row) {
     quantity: row.quantity,
     expiryDate: row.expiry_date,
   });
+  const fallbackSell = Number(row.product_price ?? 0);
+  const rawSell = row.unit_price;
+  const unitPrice =
+    rawSell != null && rawSell !== '' && Number.isFinite(Number(rawSell))
+      ? Number(rawSell)
+      : fallbackSell;
+
   return {
     id: row.id,
     productId: row.product_id,
@@ -963,6 +1021,7 @@ function mapBatchRow(row) {
     quantity: row.quantity,
     initialQuantity: row.initial_quantity,
     unitCost: row.unit_cost,
+    unitPrice,
     expiryDate: row.expiry_date,
     receivedDate: row.received_date,
     supplierId: row.supplier_id,
@@ -975,6 +1034,69 @@ function mapBatchRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/** FIFO sellable batches + first-batch POS price for product list / POS. */
+function enrichProductsWithFifoBatches(productRows) {
+  const list = Array.isArray(productRows) ? productRows : [];
+  if (list.length === 0) return list;
+  const ids = list.map((p) => p.id).filter(Boolean);
+  if (ids.length === 0) return list;
+
+  const placeholders = ids.map(() => '?').join(',');
+  const [batchRows] = execute(
+    `SELECT ib.id, ib.product_id, ib.batch_number, ib.quantity, ib.unit_cost,
+            ib.unit_price, ib.expiry_date, ib.received_date, ib.status,
+            CAST(p.price AS REAL) AS product_price
+     FROM inventory_batches ib
+     JOIN products p ON p.id = ib.product_id
+     WHERE p.deleted_at IS NULL
+       AND ib.status = 'active'
+       AND ib.quantity > 0
+       AND ib.product_id IN (${placeholders})`,
+    ids
+  );
+
+  const fifoSort = (a, b) => {
+    const aNo = !a.expiry_date || a.expiry_date === '';
+    const bNo = !b.expiry_date || b.expiry_date === '';
+    const tA = aNo ? 1 : 0;
+    const tB = bNo ? 1 : 0;
+    if (tA !== tB) return tA - tB;
+    if (!aNo && !bNo) {
+      const c = String(a.expiry_date).localeCompare(String(b.expiry_date));
+      if (c !== 0) return c;
+    }
+    const r = String(a.received_date || '').localeCompare(String(b.received_date || ''));
+    if (r !== 0) return r;
+    return String(a.id).localeCompare(String(b.id));
+  };
+
+  const byProduct = new Map();
+  for (const row of batchRows || []) {
+    const pid = row.product_id;
+    if (!byProduct.has(pid)) byProduct.set(pid, []);
+    byProduct.get(pid).push(row);
+  }
+
+  return list.map((p) => {
+    const raw = (byProduct.get(p.id) || []).slice().sort(fifoSort);
+    const productPrice = Number(p.price) || 0;
+    const fifoBatches = raw.map((b) => ({
+      id: b.id,
+      batchNumber: b.batch_number,
+      quantity: Number(b.quantity) || 0,
+      unitCost: Number(b.unit_cost) || 0,
+      unitPrice:
+        b.unit_price != null && b.unit_price !== '' && Number.isFinite(Number(b.unit_price))
+          ? Number(b.unit_price)
+          : productPrice,
+      expiryDate: b.expiry_date,
+      receivedDate: b.received_date,
+    }));
+    const posDisplayPrice = fifoBatches.length > 0 ? fifoBatches[0].unitPrice : productPrice;
+    return { ...p, fifoBatches, posDisplayPrice };
+  });
 }
 
 // Get all inventory batches (with filters, search, sort)
@@ -994,7 +1116,8 @@ app.get('/api/inventory-batches', async (req, res) => {
     let query = `
       SELECT
         ib.id, ib.product_id, ib.batch_number, ib.quantity, ib.initial_quantity,
-        ib.unit_cost, ib.expiry_date, ib.received_date, ib.supplier_id,
+        ib.unit_cost, ib.unit_price, CAST(p.price AS REAL) AS product_price,
+        ib.expiry_date, ib.received_date, ib.supplier_id,
         ib.notes, ib.storage_location, ib.status, ib.created_at, ib.updated_at,
         p.name AS product_name, p.category_name,
         s.name AS supplier_name
@@ -1192,19 +1315,26 @@ app.post('/api/inventory-batches', async (req, res) => {
         const unitCost = Number(item.unitCost) || 0;
         // Verify product exists
         const [productRows] = connection.execute(
-          'SELECT id, name, quantity FROM products WHERE id = ? AND deleted_at IS NULL',
+          'SELECT id, name, quantity, price FROM products WHERE id = ? AND deleted_at IS NULL',
           [item.productId]
         );
         if (!productRows || productRows.length === 0) {
           throw new Error(`Product not found: ${item.productId}`);
         }
+        const productRow = productRows[0];
+        const listPrice = Number(productRow.price) || 0;
+        const unitSellRaw = item.unitPrice ?? item.unit_price;
+        const unitSell =
+          unitSellRaw != null && unitSellRaw !== '' && Number.isFinite(Number(unitSellRaw))
+            ? Number(unitSellRaw)
+            : listPrice;
         const batchId = uuidv4();
         connection.execute(
           `INSERT INTO inventory_batches (
             id, product_id, batch_number, quantity, initial_quantity,
-            unit_cost, expiry_date, received_date, supplier_id, notes, storage_location,
+            unit_cost, unit_price, expiry_date, received_date, supplier_id, notes, storage_location,
             source_type, source_id, status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', NULL, 'active')`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', NULL, 'active')`,
           [
             batchId,
             item.productId,
@@ -1212,6 +1342,7 @@ app.post('/api/inventory-batches', async (req, res) => {
             qty,
             qty,
             unitCost,
+            unitSell,
             normalizedExpiry,
             normalizedReceived,
             normalizedSupplier,
@@ -1224,7 +1355,7 @@ app.post('/api/inventory-batches', async (req, res) => {
           'UPDATE products SET quantity = quantity + ? WHERE id = ?',
           [qty, item.productId]
         );
-        insertedIds.push({ id: batchId, productId: item.productId, productName: productRows[0].name });
+        insertedIds.push({ id: batchId, productId: item.productId, productName: productRow.name });
       }
       return insertedIds;
     });
@@ -1260,6 +1391,7 @@ app.put('/api/inventory-batches/:id', async (req, res) => {
       batchNumber,
       quantity,
       unitCost,
+      unitPrice,
       receivedDate,
       expiryDate,
       supplierId,
@@ -1279,7 +1411,7 @@ app.put('/api/inventory-batches/:id', async (req, res) => {
 
     const result = await withTransaction(async (connection) => {
       const [rows] = connection.execute(
-        'SELECT id, product_id, quantity FROM inventory_batches WHERE id = ?',
+        'SELECT id, product_id, quantity, unit_price FROM inventory_batches WHERE id = ?',
         [id]
       );
       if (!rows || rows.length === 0) {
@@ -1292,9 +1424,26 @@ app.put('/api/inventory-batches/:id', async (req, res) => {
       const delta = newQty - oldQty;
       const newStatus = newQty <= 0 ? 'depleted' : 'active';
 
+      const [priceRows] = connection.execute(
+        'SELECT CAST(price AS REAL) AS price FROM products WHERE id = ?',
+        [existing.product_id]
+      );
+      const listPrice = Number(priceRows?.[0]?.price) || 0;
+      const sellRaw = unitPrice !== undefined ? unitPrice : req.body?.unit_price;
+      const existingSell =
+        existing.unit_price != null &&
+        existing.unit_price !== '' &&
+        Number.isFinite(Number(existing.unit_price))
+          ? Number(existing.unit_price)
+          : null;
+      const resolvedSell =
+        sellRaw != null && sellRaw !== '' && Number.isFinite(Number(sellRaw))
+          ? Number(sellRaw)
+          : (existingSell ?? listPrice);
+
       connection.execute(
         `UPDATE inventory_batches SET
-          batch_number = ?, quantity = ?, unit_cost = ?,
+          batch_number = ?, quantity = ?, unit_cost = ?, unit_price = ?,
           received_date = ?, expiry_date = ?, supplier_id = ?,
           notes = ?, storage_location = ?, status = ?,
           updated_at = datetime('now')
@@ -1303,6 +1452,7 @@ app.put('/api/inventory-batches/:id', async (req, res) => {
           normalizeOptionalText(batchNumber),
           newQty,
           Number(unitCost) || 0,
+          resolvedSell,
           normalizeOptionalDate(receivedDate),
           normalizeOptionalDate(expiryDate),
           normalizeOptionalText(supplierId),
@@ -1620,6 +1770,13 @@ app.post('/api/products', async (req, res) => {
     const batchNumber = normalizeOptionalText(product.batchNumber ?? product.batch_number);
     const expiryDate = normalizeOptionalDate(product.expiryDate ?? product.expiry_date);
 
+    if (!batchNumber) {
+      return res.status(400).json({
+        error: 'Batch number is required',
+        details: 'Every product must have an initial batch / lot number.',
+      });
+    }
+
     await withTransaction(async (connection) => {
       connection.execute(
         `INSERT INTO products (
@@ -1643,17 +1800,16 @@ app.post('/api/products', async (req, res) => {
         ]
       );
 
-      if (initialQuantity > 0) {
-        addInventoryBatch(connection, {
-          productId: id,
-          quantity: initialQuantity,
-          batchNumber,
-          expiryDate,
-          unitCost: product.cost || 0,
-          sourceType: 'initial_stock',
-          sourceId: id,
-        });
-      }
+      insertOpeningInventoryBatch(connection, {
+        productId: id,
+        batchNumber,
+        quantity: initialQuantity,
+        expiryDate,
+        unitCost: product.cost || 0,
+        unitPrice: product.price,
+        sourceType: 'initial_stock',
+        sourceId: id,
+      });
     });
 
     console.log('Product created with ID:', id);
@@ -1855,8 +2011,9 @@ app.get('/api/products/:id', async (req, res) => {
       console.log('Product not found:', id);
       res.status(404).json({ error: 'Product not found' });
     } else {
-      console.log('Product fetched:', rows[0]);
-      res.json(rows[0]);
+      const [enriched] = enrichProductsWithFifoBatches(rows);
+      console.log('Product fetched:', enriched);
+      res.json(enriched);
     }
   } catch (error) {
     console.error('Error fetching product:', error);

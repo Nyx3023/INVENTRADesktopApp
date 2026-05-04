@@ -62,7 +62,7 @@ const BatchFormModal = ({
     storageLocation: '',
   });
 
-  // Each row: { productId, productName, quantity, unitCost }
+  // Each row: { productId, productName, quantity, unitCost, unitPrice } — unitPrice = POS selling price for this batch
   const [items, setItems] = useState([]);
 
   // Initialize when opened
@@ -84,6 +84,7 @@ const BatchFormModal = ({
           productName: batch.productName,
           quantity: batch.quantity ?? 1,
           unitCost: batch.unitCost ?? 0,
+          unitPrice: batch.unitPrice ?? batch.unit_price ?? 0,
         },
       ]);
     } else {
@@ -101,7 +102,8 @@ const BatchFormModal = ({
             productId: lockedProduct.id,
             productName: lockedProduct.name,
             quantity: 1,
-            unitCost: lockedProduct.price ?? lockedProduct.cost ?? 0,
+            unitCost: lockedProduct.cost ?? 0,
+            unitPrice: lockedProduct.price ?? 0,
           },
         ]);
       } else {
@@ -166,7 +168,8 @@ const BatchFormModal = ({
           productId: product.id,
           productName: product.name,
           quantity: 1,
-          unitCost: product.price ?? product.cost ?? 0,
+          unitCost: product.cost ?? 0,
+          unitPrice: product.price ?? 0,
         },
       ];
     });
@@ -217,6 +220,7 @@ const BatchFormModal = ({
           batchNumber: shared.batchNumber,
           quantity: Number.parseInt(it.quantity, 10),
           unitCost: Number(it.unitCost) || 0,
+          unitPrice: Number(it.unitPrice) || 0,
           receivedDate: shared.receivedDate,
           expiryDate: shared.expiryDate || null,
           supplierId: shared.supplierId || null,
@@ -230,6 +234,7 @@ const BatchFormModal = ({
             productId: it.productId,
             quantity: Number.parseInt(it.quantity, 10),
             unitCost: Number(it.unitCost) || 0,
+            unitPrice: Number(it.unitPrice) || 0,
           })),
           batchNumber: shared.batchNumber || null,
           receivedDate: shared.receivedDate,
@@ -407,7 +412,8 @@ const BatchFormModal = ({
                 ) : (
                   items.map((it, idx) => {
                     const errs = itemErrors[idx] || {};
-                    const subtotal = (Number.parseInt(it.quantity, 10) || 0) * (Number(it.unitCost) || 0);
+                    const costSubtotal = (Number.parseInt(it.quantity, 10) || 0) * (Number(it.unitCost) || 0);
+                    const retailSubtotal = (Number.parseInt(it.quantity, 10) || 0) * (Number(it.unitPrice) || 0);
                     return (
                       <div
                         key={it.productId + '-' + idx}
@@ -430,8 +436,8 @@ const BatchFormModal = ({
                             </button>
                           )}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="min-w-[4.5rem] flex-1">
                             <label className={`block text-[10px] font-medium ${colors.text.secondary} mb-1`}>Qty *</label>
                             <input
                               type="number"
@@ -450,8 +456,8 @@ const BatchFormModal = ({
                               className={`w-full border rounded-lg px-2 py-1.5 text-center text-sm font-semibold ${colors.input.primary} ${errs.quantity ? 'border-red-500' : ''}`}
                             />
                           </div>
-                          <div className="flex-1">
-                            <label className={`block text-[10px] font-medium ${colors.text.secondary} mb-1`}>Unit Cost</label>
+                          <div className="min-w-[5rem] flex-1">
+                            <label className={`block text-[10px] font-medium ${colors.text.secondary} mb-1`}>Unit cost</label>
                             <input
                               type="number"
                               min="0"
@@ -464,10 +470,30 @@ const BatchFormModal = ({
                               className={`w-full border rounded-lg px-2 py-1.5 text-sm ${colors.input.primary}`}
                             />
                           </div>
-                          <div className="flex-1">
-                            <label className={`block text-[10px] font-medium ${colors.text.secondary} mb-1`}>Subtotal</label>
+                          <div className="min-w-[5rem] flex-1">
+                            <label className={`block text-[10px] font-medium ${colors.text.secondary} mb-1`}>Sell (POS)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={it.unitPrice}
+                              onChange={(e) => {
+                                const v = parseFloat(e.target.value);
+                                updateItem(idx, { unitPrice: Number.isFinite(v) && v >= 0 ? v : 0 });
+                              }}
+                              className={`w-full border rounded-lg px-2 py-1.5 text-sm ${colors.input.primary}`}
+                            />
+                          </div>
+                          <div className="min-w-[5.5rem] flex-1">
+                            <label className={`block text-[10px] font-medium ${colors.text.secondary} mb-1`}>Cost value</label>
                             <div className={`border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 rounded-lg px-2 py-1.5 text-sm font-bold text-right ${colors.text.primary}`}>
-                              {formatCurrency(subtotal)}
+                              {formatCurrency(costSubtotal)}
+                            </div>
+                          </div>
+                          <div className="min-w-[5.5rem] flex-1">
+                            <label className={`block text-[10px] font-medium ${colors.text.secondary} mb-1`}>Retail value</label>
+                            <div className={`border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg px-2 py-1.5 text-sm font-bold text-right ${colors.text.primary}`}>
+                              {formatCurrency(retailSubtotal)}
                             </div>
                           </div>
                         </div>

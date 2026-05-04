@@ -178,7 +178,7 @@ const InventoryScreen = () => {
       setPrefilledBarcode('');
     } catch (error) {
       console.error('Error adding product:', error);
-      toast.error('Error adding product');
+      toast.error(error?.message || 'Error adding product');
     }
   };
 
@@ -564,8 +564,17 @@ const InventoryScreen = () => {
       let successCount = 0;
       let errorCount = 0;
 
+      let importAutoBatch = 0;
       for (const product of productsToImport) {
         try {
+          importAutoBatch += 1;
+          const slug = String(product.name || 'ITEM')
+            .replace(/[^a-zA-Z0-9]+/g, '')
+            .slice(0, 8)
+            .toUpperCase() || 'ITEM';
+          const explicitBatch = (product.batchNumber || product.batch_number || '').trim();
+          const batchNumber =
+            explicitBatch || `IMPORT-${slug}-${String(importAutoBatch).padStart(4, '0')}`;
           // Map imported product shape to API payload shape
           const payload = {
             name: product.name,
@@ -576,7 +585,7 @@ const InventoryScreen = () => {
             quantity: product.quantity,
             lowStockThreshold: product.lowStockThreshold ?? product.low_stock_threshold ?? 0,
             reorderPoint: product.reorderPoint ?? product.lowStockThreshold ?? product.low_stock_threshold ?? 15,
-            batchNumber: product.batchNumber || product.batch_number || '',
+            batchNumber,
             expiryDate: product.expiryDate || product.expiry_date || '',
             barcode: product.barcode || null,
             imageUrl: product.imageUrl || product.image_url || null,
@@ -1585,7 +1594,6 @@ const InventoryScreen = () => {
       {/* Modals */}
       {isModalOpen && (
         <ProductModal
-          isOpen={isModalOpen}
           onClose={() => {
             setIsModalOpen(false);
             setSelectedProduct(null);

@@ -1,27 +1,21 @@
 /**
  * Inventory Batch Seeder
  *
- * Seeds realistic inventory batches for all existing active products, including
- * batch numbers, quantities, unit costs, and expiration dates.
- *
- * Each product gets 1-3 batches with staggered receive and expiry dates so that
- * the FIFO / FEFO deduction logic has multiple batches to work through.
+ * Seeds inventory_batches for products. Use --backfill to create one batch per
+ * product that has none (fixes legacy products after batch tracking was added).
  *
  * Usage:
  *   node scripts/seed-inventory-batches.js
- *   node scripts/seed-inventory-batches.js --clear        (wipe existing batches first)
- *   node scripts/seed-inventory-batches.js --batches=3    (max batches per product, default 3)
- *
- * NOTE: Running without --clear will APPEND new batches on top of any that
- *       already exist. Pass --clear to start fresh.
+ *   node scripts/seed-inventory-batches.js --clear
+ *   node scripts/seed-inventory-batches.js --batches=3
+ *   node scripts/seed-inventory-batches.js --backfill    (only products with zero batch rows)
+ *   node scripts/seed-inventory-batches.js --db=C:\\path\\to\\pos_inventory.db
  */
 
 import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getArgValue(name) {
   const arg = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -49,14 +43,9 @@ function addDays(date, days) {
 }
 
 function formatDate(date) {
-  return date.toISOString().slice(0, 10); // YYYY-MM-DD
+  return date.toISOString().slice(0, 10);
 }
 
-function formatDateTime(date) {
-  return date.toISOString().replace('T', ' ').slice(0, 19);
-}
-
-/** Generates a human-readable batch number like ABCD-20240315-A */
 function generateBatchNumber(productName, receivedDate, index) {
   const prefix = productName
     .toUpperCase()
@@ -64,67 +53,148 @@ function generateBatchNumber(productName, receivedDate, index) {
     .slice(0, 4)
     .padEnd(4, 'X');
   const datePart = formatDate(receivedDate).replace(/-/g, '');
-  const suffix = String.fromCharCode(65 + index); // A, B, C …
+  const suffix = String.fromCharCode(65 + index);
   return `${prefix}-${datePart}-${suffix}`;
 }
 
 function getDatabasePath() {
+  const fromEnv = process.env.DB_PATH || getArgValue('db');
+  if (fromEnv && fs.existsSync(fromEnv)) return path.resolve(fromEnv);
   const dataDb = path.join(process.cwd(), 'data', 'pos_inventory.db');
   const rootDb = path.join(process.cwd(), 'pos_inventory.db');
-  return fs.existsSync(dataDb) ? dataDb : rootDb;
+  if (fs.existsSync(dataDb)) return dataDb;
+  return rootDb;
 }
 
-// ─── Category shelf-life map (days until expiry from received date) ───────────
-// Adjust ranges to fit your store's product types.
 const CATEGORY_SHELF_LIFE = {
-  // Perishable / short shelf-life
-  foods:       { min: 30,   max: 90   },
-  food:        { min: 30,   max: 90   },
-  beverages:   { min: 60,   max: 180  },
-  dairy:       { min: 14,   max: 30   },
-  bakery:      { min: 3,    max: 14   },
-  produce:     { min: 5,    max: 21   },
-  frozen:      { min: 90,   max: 365  },
-  meat:        { min: 3,    max: 14   },
-  seafood:     { min: 3,    max: 10   },
-  snacks:      { min: 90,   max: 365  },
-  candy:       { min: 180,  max: 540  },
-
-  // Health / beauty
-  medicines:   { min: 365,  max: 1095 },
-  medicine:    { min: 365,  max: 1095 },
-  pharmacy:    { min: 365,  max: 1095 },
-  vitamins:    { min: 365,  max: 730  },
-  cosmetics:   { min: 365,  max: 730  },
-  personal:    { min: 365,  max: 730  },
-
-  // Longer shelf-life / non-perishable
-  household:   { min: 730,  max: 1825 },
-  cleaning:    { min: 730,  max: 1825 },
-  clothing:    { min: null, max: null },  // No expiry
-  electronics: { min: null, max: null },  // No expiry
-  tools:       { min: null, max: null },  // No expiry
-
-  default:     { min: 180,  max: 730  },  // Fallback for unknown categories
+  foods: { min: 30, max: 90 },
+  food: { min: 30, max: 90 },
+  beverages: { min: 60, max: 180 },
+  dairy: { min: 14, max: 30 },
+  bakery: { min: 3, max: 14 },
+  produce: { min: 5, max: 21 },
+  frozen: { min: 90, max: 365 },
+  meat: { min: 3, max: 14 },
+  seafood: { min: 3, max: 10 },
+  snacks: { min: 90, max: 365 },
+  candy: { min: 180, max: 540 },
+  medicines: { min: 365, max: 1095 },
+  medicine: { min: 365, max: 1095 },
+  pharmacy: { min: 365, max: 1095 },
+  vitamins: { min: 365, max: 730 },
+  cosmetics: { min: 365, max: 730 },
+  personal: { min: 365, max: 730 },
+  household: { min: 730, max: 1825 },
+  cleaning: { min: 730, max: 1825 },
+  clothing: { min: null, max: null },
+  electronics: { min: null, max: null },
+  tools: { min: null, max: null },
+  default: { min: 180, max: 730 },
 };
 
 function getShelfLife(categoryName) {
   const key = (categoryName || '').toLowerCase().trim();
   for (const [k, v] of Object.entries(CATEGORY_SHELF_LIFE)) {
-    if (key.includes(k)) return v;
+    if (k !== 'default' && key.includes(k)) return v;
   }
   return CATEGORY_SHELF_LIFE.default;
 }
 
-// ─── Core seeder ─────────────────────────────────────────────────────────────
+/** Must match server inventory_batches INSERT shape (received_date + nullable extras). */
+function prepareInsertBatch(db) {
+  return db.prepare(`
+    INSERT INTO inventory_batches (
+      id, product_id, batch_number, quantity, initial_quantity,
+      unit_cost, unit_price, expiry_date, received_date, supplier_id, notes, storage_location,
+      source_type, source_id, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?)
+  `);
+}
+
+function backfillMissingBatches(db) {
+  const insertBatch = prepareInsertBatch(db);
+  const products = db.prepare(`
+    SELECT p.id, p.name, p.quantity, p.cost, p.price, p.category_name, p.batch_number, p.expiry_date
+    FROM products p
+    WHERE p.deleted_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM inventory_batches ib WHERE ib.product_id = p.id)
+    ORDER BY p.name
+  `).all();
+
+  if (products.length === 0) {
+    console.log('  No products need backfill (every product already has at least one batch).');
+    return { inserted: 0, skipped: 0 };
+  }
+
+  const now = new Date();
+  let inserted = 0;
+
+  const run = db.transaction(() => {
+    for (const p of products) {
+      const qty = Math.max(0, Number(p.quantity) || 0);
+      const productCost = Number(p.cost) || 0;
+      const productPrice = Number(p.price) || 0;
+      const shelfLife = getShelfLife(p.category_name);
+      const receivedDate = addDays(now, -randomInt(1, 14));
+
+      let expiryDate = null;
+      if (shelfLife.min !== null && shelfLife.max !== null) {
+        const shelfDays = randomInt(shelfLife.min, shelfLife.max);
+        expiryDate = formatDate(addDays(receivedDate, shelfDays));
+      }
+      if (p.expiry_date) {
+        try {
+          expiryDate = String(p.expiry_date).slice(0, 10);
+        } catch (_) { /* keep computed */ }
+      }
+
+      const batchNumber =
+        (p.batch_number && String(p.batch_number).trim()) ||
+        generateBatchNumber(p.name, receivedDate, 0);
+      const batchId = uuidv4();
+      const status = qty <= 0 ? 'depleted' : 'active';
+      const sourceId = `backfill-${batchId.slice(0, 8)}`;
+
+      insertBatch.run(
+        batchId,
+        p.id,
+        batchNumber,
+        qty,
+        qty,
+        productCost,
+        productPrice,
+        expiryDate,
+        null,
+        null,
+        null,
+        'seeder',
+        sourceId,
+        status
+      );
+
+      db.prepare(`UPDATE products SET batch_number = COALESCE(NULLIF(TRIM(batch_number), ''), ?) WHERE id = ?`).run(
+        batchNumber,
+        p.id
+      );
+      inserted += 1;
+    }
+  });
+
+  run();
+  return { inserted, skipped: 0 };
+}
 
 function seedBatches(db, { maxBatchesPerProduct, clearExisting }) {
-  const products = db.prepare(`
-    SELECT id, name, category_name, quantity, cost
+  const products = db
+    .prepare(
+      `
+    SELECT id, name, category_name, quantity, cost, price
     FROM products
     WHERE deleted_at IS NULL
     ORDER BY name
-  `).all();
+  `
+    )
+    .all();
 
   if (products.length === 0) {
     throw new Error('No active products found. Add products before seeding batches.');
@@ -135,32 +205,20 @@ function seedBatches(db, { maxBatchesPerProduct, clearExisting }) {
     db.prepare('DELETE FROM inventory_batches').run();
   }
 
-  // Matches the INSERT in addInventoryBatch() in server/index.js
-  // Columns: id, product_id, batch_number, quantity, initial_quantity,
-  //          unit_cost, expiry_date, source_type, source_id, status
-  const insertBatch = db.prepare(`
-    INSERT INTO inventory_batches (
-      id, product_id, batch_number, quantity, initial_quantity,
-      unit_cost, expiry_date, source_type, source_id, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  const insertBatch = prepareInsertBatch(db);
 
   let totalBatches = 0;
   let productsWithBatches = 0;
-
   const now = new Date();
 
   const run = db.transaction(() => {
     for (const product of products) {
-      const productQty  = Math.max(0, Number(product.quantity) || 0);
+      const productQty = Math.max(0, Number(product.quantity) || 0);
       const productCost = Number(product.cost) || 0;
-      const shelfLife   = getShelfLife(product.category_name);
-
-      // How many batches will this product have?
+      const productPrice = Number(product.price) || 0;
+      const shelfLife = getShelfLife(product.category_name);
       const numBatches = randomInt(1, maxBatchesPerProduct);
 
-      // Distribute quantity across batches.
-      // Older batches (lower index) may have less stock (partially consumed).
       let quantities = [];
       if (productQty > 0) {
         let remaining = productQty;
@@ -168,15 +226,14 @@ function seedBatches(db, { maxBatchesPerProduct, clearExisting }) {
           if (i === numBatches - 1) {
             quantities.push(Math.max(1, remaining));
           } else {
-            const fraction  = randomFloat(0.15, 0.55);
-            const share     = Math.max(1, Math.round(remaining * fraction));
-            const capped    = Math.min(share, remaining - (numBatches - i - 1));
+            const fraction = randomFloat(0.15, 0.55);
+            const share = Math.max(1, Math.round(remaining * fraction));
+            const capped = Math.min(share, remaining - (numBatches - i - 1));
             quantities.push(Math.max(1, capped));
             remaining -= capped;
           }
         }
       } else {
-        // Zero-stock product – create depleted/empty historical batches
         for (let i = 0; i < numBatches; i++) {
           quantities.push(0);
         }
@@ -184,49 +241,43 @@ function seedBatches(db, { maxBatchesPerProduct, clearExisting }) {
 
       for (let i = 0; i < numBatches; i++) {
         const qty = quantities[i];
-
-        // Older batches received further in the past (FIFO order)
-        // batch 0 = oldest, batch numBatches-1 = newest
         const daysAgoMin = (numBatches - 1 - i) * 15;
         const daysAgoMax = (numBatches - i) * 30;
-        const daysAgoReceived = randomInt(
-          Math.max(0, daysAgoMin),
-          Math.max(daysAgoMin + 1, daysAgoMax)
-        );
+        const daysAgoReceived = randomInt(Math.max(0, daysAgoMin), Math.max(daysAgoMin + 1, daysAgoMax));
         const receivedDate = addDays(now, -daysAgoReceived);
 
-        // Expiry date derived from received date + category shelf life
         let expiryDate = null;
         if (shelfLife.min !== null && shelfLife.max !== null) {
           const shelfDays = randomInt(shelfLife.min, shelfLife.max);
-          expiryDate = addDays(receivedDate, shelfDays);
-
-          // ~15% chance the oldest batch is near/past expiry (realism)
+          expiryDate = formatDate(addDays(receivedDate, shelfDays));
           if (i === 0 && Math.random() < 0.15) {
-            expiryDate = addDays(now, randomInt(-10, 30));
+            expiryDate = formatDate(addDays(now, randomInt(-10, 30)));
           }
         }
 
         const batchNumber = generateBatchNumber(product.name, receivedDate, i);
-        const batchId     = uuidv4();
-
-        // Slight cost variation per batch (±5%) to reflect price fluctuations
+        const batchId = uuidv4();
         const variationPct = randomFloat(-0.05, 0.05);
-        const unitCost     = parseFloat(Math.max(0, productCost * (1 + variationPct)).toFixed(2));
-
-        const status        = qty <= 0 ? 'depleted' : 'active';
-        const expiryDateStr = expiryDate ? formatDate(expiryDate) : null;
+        const unitCost = parseFloat(Math.max(0, productCost * (1 + variationPct)).toFixed(2));
+        const priceVariationPct = randomFloat(-0.03, 0.03);
+        const unitPrice = parseFloat(Math.max(0, productPrice * (1 + priceVariationPct)).toFixed(2));
+        const status = qty <= 0 ? 'depleted' : 'active';
+        const sourceId = `seed-${batchId.slice(0, 8)}`;
 
         insertBatch.run(
           batchId,
           product.id,
           batchNumber,
           qty,
-          qty,           // initial_quantity same as current quantity at seed time
+          qty,
           unitCost,
-          expiryDateStr,
+          unitPrice,
+          expiryDate,
+          null,
+          null,
+          null,
           'seeder',
-          `seed-${batchId.slice(0, 8)}`,
+          sourceId,
           status
         );
 
@@ -238,34 +289,26 @@ function seedBatches(db, { maxBatchesPerProduct, clearExisting }) {
   });
 
   run();
-
   return { totalBatches, productsWithBatches, productCount: products.length };
 }
-
-// ─── Main ─────────────────────────────────────────────────────────────────────
 
 function main() {
   const dbPath = getDatabasePath();
   if (!fs.existsSync(dbPath)) {
-    console.error(`❌  Database file not found: ${dbPath}`);
-    console.error('    Start the application at least once so the database is initialized.');
+    console.error(`Database file not found: ${dbPath}`);
+    console.error('  Tip: copy your pos_inventory.db here or pass --db=FULL_PATH');
+    console.error('  Or set DB_PATH environment variable.');
     process.exit(1);
   }
 
-  const clearExisting       = hasFlag('clear');
-  const maxBatchesRaw       = getArgValue('batches');
-  const maxBatchesPerProduct = Math.max(1, Math.min(10,
-    maxBatchesRaw ? parseInt(maxBatchesRaw, 10) || 3 : 3
-  ));
+  const clearExisting = hasFlag('clear');
+  const backfillOnly = hasFlag('backfill');
+  const maxBatchesRaw = getArgValue('batches');
+  const maxBatchesPerProduct = Math.max(1, Math.min(10, maxBatchesRaw ? parseInt(maxBatchesRaw, 10) || 3 : 3));
 
   console.log('');
-  console.log('╔══════════════════════════════════════════════════╗');
-  console.log('║       INVENTRA  –  Inventory Batch Seeder        ║');
-  console.log('╚══════════════════════════════════════════════════╝');
-  console.log('');
-  console.log(`  Database           : ${dbPath}`);
-  console.log(`  Max batches/product: ${maxBatchesPerProduct}`);
-  console.log(`  Clear existing     : ${clearExisting ? 'YES – all batches will be deleted first' : 'no'}`);
+  console.log('INVENTRA — Inventory batch seeder');
+  console.log(`  Database : ${dbPath}`);
   console.log('');
 
   const db = new Database(dbPath);
@@ -273,24 +316,35 @@ function main() {
   db.pragma('journal_mode = WAL');
 
   try {
+    if (backfillOnly) {
+      console.log('  Mode: --backfill (products with no inventory_batches rows)');
+      const { inserted } = backfillMissingBatches(db);
+      const totalInDb = db.prepare('SELECT COUNT(*) AS count FROM inventory_batches').get();
+      console.log('');
+      console.log(`  Done. Rows inserted: ${inserted}`);
+      console.log(`  Total batches in DB: ${totalInDb.count}`);
+      console.log('');
+      process.exit(0);
+    }
+
+    console.log(`  Max batches/product: ${maxBatchesPerProduct}`);
+    console.log(`  Clear existing     : ${clearExisting ? 'yes' : 'no'}`);
+    console.log('');
+
     const result = seedBatches(db, { maxBatchesPerProduct, clearExisting });
     const totalInDb = db.prepare('SELECT COUNT(*) AS count FROM inventory_batches').get();
 
-    console.log('  ✅  Seeding complete!');
-    console.log('');
-    console.log('  Summary');
-    console.log('  ─────────────────────────────────────────');
+    console.log('  Seeding complete.');
     console.log(`  Products processed     : ${result.productCount}`);
     console.log(`  Products with batches  : ${result.productsWithBatches}`);
     console.log(`  New batches inserted   : ${result.totalBatches}`);
     console.log(`  Total batches in DB    : ${totalInDb.count}`);
     console.log('');
-    console.log('  Tip: Open Inventory → Batches tab to review the seeded data.');
+    console.log('  If legacy products still show no batches, run:');
+    console.log('    node scripts/seed-inventory-batches.js --backfill');
     console.log('');
   } catch (err) {
-    console.error('');
-    console.error('  ❌  Seeder failed:', err.message || err);
-    console.error('');
+    console.error('Seeder failed:', err.message || err);
     process.exit(1);
   } finally {
     db.close();

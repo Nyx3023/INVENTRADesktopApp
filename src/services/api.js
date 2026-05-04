@@ -77,6 +77,22 @@ const normalizeProduct = async (product) => {
   const resolvedImage = await resolveAssetUrl(rawImage || product.imageUrl || '');
   const categoryName = product.category_name ?? product.category ?? null;
 
+  let fifoBatches = product.fifoBatches;
+  if (typeof fifoBatches === 'string') {
+    try {
+      fifoBatches = JSON.parse(fifoBatches);
+    } catch {
+      fifoBatches = [];
+    }
+  }
+  if (!Array.isArray(fifoBatches)) fifoBatches = [];
+
+  const listPrice = Number(product.price) || 0;
+  const posDisplayPrice =
+    product.posDisplayPrice != null && product.posDisplayPrice !== ''
+      ? Number(product.posDisplayPrice)
+      : listPrice;
+
   return {
     ...product,
     category_name: categoryName,
@@ -84,6 +100,8 @@ const normalizeProduct = async (product) => {
     image_url: rawImage || '',
     imageUrl: resolvedImage || rawImage || '',
     status: product.status || 'available',
+    fifoBatches,
+    posDisplayPrice: Number.isFinite(posDisplayPrice) ? posDisplayPrice : listPrice,
   };
 };
 

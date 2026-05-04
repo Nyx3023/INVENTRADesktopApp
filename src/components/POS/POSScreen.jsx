@@ -9,6 +9,7 @@ import { MagnifyingGlassIcon, XMarkIcon, ShoppingCartIcon, BanknotesIcon, Camera
 import AsyncImage, { preloadImages } from '../common/AsyncImage';
 import { useSettings } from '../../context/SettingsContext';
 import { formatCurrency } from '../../utils/formatters';
+import { addOneUnitFifoToCart, getMaxQtyForCartLine } from '../../utils/posFifoAllocation';
 import { printerService } from '../../utils/printerService';
 import AdminOverrideModal from '../common/AdminOverrideModal';
 import { useNavigationBlocker } from '../../context/NavigationBlockerContext';
@@ -323,31 +324,12 @@ const POSScreen = () => {
       return false;
     }
 
-    const availableQuantity = getAvailableStock(product.id, product.quantity ?? 0);
+    const resolved = getProductSnapshot(product);
     let wasAdded = false;
-
-    startTransition(() => {
-      setCart(prevCart => {
-        const existingItem = prevCart.find(item => item.id === product.id);
-        const currentCartQuantity = existingItem ? existingItem.quantity : 0;
-        const nextQuantity = currentCartQuantity + 1;
-
-        if (nextQuantity > availableQuantity) {
-          toast.error(`Insufficient stock. Only ${availableQuantity} available.`);
-          return prevCart;
-        }
-
-        wasAdded = true;
-
-        if (existingItem) {
-          return prevCart.map(item =>
-            item.id === product.id
-              ? { ...item, quantity: nextQuantity }
-              : item
-          );
-        }
-        return [...prevCart, { ...product, quantity: 1 }];
-      });
+    setCart((prevCart) => {
+      const { ok, cart: next } = addOneUnitFifoToCart(prevCart, resolved, (msg) => toast.error(msg));
+      wasAdded = ok;
+      return next;
     });
 
     return wasAdded;
@@ -383,54 +365,67 @@ const POSScreen = () => {
     }
   };
 
-  const executeRemoveFromCart = (productId) => {
-    setCart(prevCart => prevCart.filter(item => item.id !== productId));
+  const executeRemoveFromCart = (cartLineId) => {
+    setCart((prevCart) => prevCart.filter((item) => item.cartLineId !== cartLineId));
   };
 
-  const executeUpdateQuantity = (productId, newQuantity) => {
+  const executeUpdateQuantity = (cartLineId, newQuantity) => {
     startTransition(() => {
-      setCart(prevCart =>
-        prevCart.map(item =>
-          item.id === productId
-            ? { ...item, quantity: newQuantity }
-            : item
-        )
+      setCart((prevCart) =>
+        prevCart
+          .map((item) =>
+            item.cartLineId === cartLineId ? { ...item, quantity: newQuantity } : item
+          )
+          .filter((item) => item.quantity >= 1)
       );
     });
   };
 
-  const removeFromCart = (productId) => {
+  const removeFromCart = (cartLineId) => {
     if (!hasPermission('void_item')) {
-      setOverrideAction({ type: 'remove_item', payload: productId });
+      setOverrideAction({ type: 'remove_item', payload: cartLineId });
       setShowOverrideModal(true);
       return;
     }
-    executeRemoveFromCart(productId);
+    executeRemoveFromCart(cartLineId);
   };
 
-  const updateCartItemQuantity = (productId, newQuantity) => {
-    const fallbackQuantity = cart.find(item => item.id === productId)?.quantity ?? 0;
+  const updateCartItemQuantity = (cartLineId, newQuantity) => {
+    const line = cart.find((i) => i.cartLineId === cartLineId);
+    if (!line) return;
 
-    // If decreasing quantity, check permission
+    const fallbackQuantity = line.quantity ?? 0;
+    const product = productsById.get(line.id);
+
     if (newQuantity < fallbackQuantity && !hasPermission('void_item')) {
-      setOverrideAction({ type: 'update_quantity', payload: { productId, newQuantity } });
+      setOverrideAction({ type: 'update_quantity', payload: { cartLineId, newQuantity } });
       setShowOverrideModal(true);
       return;
     }
 
     if (newQuantity < 1) {
-      executeRemoveFromCart(productId);
+      executeRemoveFromCart(cartLineId);
       return;
     }
 
-    const availableQuantity = getAvailableStock(productId, fallbackQuantity);
-
-    if (newQuantity > availableQuantity) {
-      toast.error(`Insufficient stock. Only ${availableQuantity} available.`);
+    const maxForLine = getMaxQtyForCartLine(line, cart, product);
+    if (newQuantity > maxForLine) {
+      toast.error(
+        `Only ${maxForLine} unit(s) on this batch line. Add the product again from the grid for the next batch price.`
+      );
       return;
     }
 
-    executeUpdateQuantity(productId, newQuantity);
+    const totalOthers = cart
+      .filter((i) => i.id === line.id && i.cartLineId !== cartLineId)
+      .reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+    const totalCap = getAvailableStock(line.id, product?.quantity ?? 0);
+    if (totalOthers + newQuantity > totalCap) {
+      toast.error(`Insufficient stock. Only ${totalCap} available.`);
+      return;
+    }
+
+    executeUpdateQuantity(cartLineId, newQuantity);
   };
 
   const handleOverrideSuccess = () => {
@@ -439,11 +434,11 @@ const POSScreen = () => {
     if (overrideAction.type === 'remove_item') {
       executeRemoveFromCart(overrideAction.payload);
     } else if (overrideAction.type === 'update_quantity') {
-      const { productId, newQuantity } = overrideAction.payload;
+      const { cartLineId, newQuantity } = overrideAction.payload;
       if (newQuantity < 1) {
-        executeRemoveFromCart(productId);
+        executeRemoveFromCart(cartLineId);
       } else {
-        executeUpdateQuantity(productId, newQuantity);
+        executeUpdateQuantity(cartLineId, newQuantity);
       }
     }
     setOverrideAction(null);
@@ -741,7 +736,7 @@ const POSScreen = () => {
         </div>
         <div className="flex-1 flex flex-col px-1">
           <h3 className={`font-semibold text-sm mb-1 line-clamp-2 h-10 ${cardColors.text.primary} leading-tight`}>{product.name}</h3>
-          <p className={`text-lg font-extrabold bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent mb-1`}>{formatCurrency(parseFloat(product.price || 0))}</p>
+          <p className={`text-lg font-extrabold bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 bg-clip-text text-transparent mb-1`}>{formatCurrency(parseFloat((product.posDisplayPrice ?? product.price) || 0))}</p>
           <div className="flex items-center justify-between mt-auto">
             <p className={`text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 ${cardColors.text.secondary}`}>Stock: {product.quantity}</p>
             {stockWarning && (
@@ -759,11 +754,13 @@ const POSScreen = () => {
     return prevProps.product.id === nextProps.product.id &&
       prevProps.product.quantity === nextProps.product.quantity &&
       prevProps.product.price === nextProps.product.price &&
+      prevProps.product.posDisplayPrice === nextProps.product.posDisplayPrice &&
+      (prevProps.product.fifoBatches?.length || 0) === (nextProps.product.fifoBatches?.length || 0) &&
       prevProps.product.name === nextProps.product.name &&
       prevProps.product.imageUrl === nextProps.product.imageUrl;
   });
 
-  const CartItem = memo(({ item, onUpdateQuantity, onRemove, availableStock, colors: itemColors }) => {
+  const CartItem = memo(({ item, onUpdateQuantity, onRemove, maxLineQty, colors: itemColors }) => {
     const [localQuantity, setLocalQuantity] = useState(item.quantity);
     const [isFocused, setIsFocused] = useState(false);
     const [isError, setIsError] = useState(false);
@@ -777,27 +774,27 @@ const POSScreen = () => {
     const handleRemove = useCallback((e) => {
       e.preventDefault();
       e.stopPropagation();
-      onRemove(item.id);
-    }, [item.id, onRemove]);
+      onRemove(item.cartLineId);
+    }, [item.cartLineId, onRemove]);
 
     const handleDecrement = useCallback((e) => {
       e.preventDefault();
       e.stopPropagation();
-      onUpdateQuantity(item.id, item.quantity - 1);
-    }, [item.id, item.quantity, onUpdateQuantity]);
+      onUpdateQuantity(item.cartLineId, item.quantity - 1);
+    }, [item.cartLineId, item.quantity, onUpdateQuantity]);
 
     const handleIncrement = useCallback((e) => {
       e.preventDefault();
       e.stopPropagation();
-      onUpdateQuantity(item.id, item.quantity + 1);
-    }, [item.id, item.quantity, onUpdateQuantity]);
+      onUpdateQuantity(item.cartLineId, item.quantity + 1);
+    }, [item.cartLineId, item.quantity, onUpdateQuantity]);
 
     const handleQuantityChange = (e) => {
       const val = e.target.value.replace(/[^0-9]/g, '');
       const numVal = parseInt(val, 10);
 
-      if (!isNaN(numVal) && numVal > availableStock) {
-        setLocalQuantity(availableStock.toString());
+      if (!isNaN(numVal) && numVal > maxLineQty) {
+        setLocalQuantity(maxLineQty.toString());
         setIsError(true);
         setTimeout(() => setIsError(false), 500); // Reset error shake after animation
       } else {
@@ -810,12 +807,12 @@ const POSScreen = () => {
       const newQty = parseInt(localQuantity, 10);
       if (isNaN(newQty) || newQty <= 0) {
         setLocalQuantity(item.quantity); // revert
-      } else if (newQty > availableStock) {
-        setLocalQuantity(availableStock.toString());
-        onUpdateQuantity(item.id, availableStock);
+      } else if (newQty > maxLineQty) {
+        setLocalQuantity(maxLineQty.toString());
+        onUpdateQuantity(item.cartLineId, maxLineQty);
       } else {
         if (newQty !== item.quantity) {
-          onUpdateQuantity(item.id, newQty);
+          onUpdateQuantity(item.cartLineId, newQty);
         }
       }
     };
@@ -842,6 +839,11 @@ const POSScreen = () => {
         <div className="flex items-start justify-between">
           <div className="flex-1 pr-2 min-w-0">
             <h3 className={`font-semibold text-sm leading-tight truncate ${itemColors.text.primary}`} title={item.name}>{item.name}</h3>
+            {item.batchNumber ? (
+              <p className={`text-[10px] mt-0.5 ${itemColors.text.tertiary} font-medium uppercase tracking-wide`}>
+                Batch {item.batchNumber}
+              </p>
+            ) : null}
             <p className={`text-xs mt-0.5 ${itemColors.text.secondary} font-medium tracking-wide`}>{formatCurrency(parseFloat(item.price || 0))}</p>
           </div>
           <button
@@ -894,10 +896,11 @@ const POSScreen = () => {
       </div>
     );
   }, (prevProps, nextProps) => {
-    return prevProps.item.id === nextProps.item.id &&
+    return prevProps.item.cartLineId === nextProps.item.cartLineId &&
       prevProps.item.quantity === nextProps.item.quantity &&
       prevProps.item.price === nextProps.item.price &&
-      prevProps.item.name === nextProps.item.name;
+      prevProps.item.name === nextProps.item.name &&
+      prevProps.item.batchNumber === nextProps.item.batchNumber;
   });
 
   const handleRestartTransaction = () => {
@@ -1017,9 +1020,9 @@ const POSScreen = () => {
                 <div className="space-y-3">
                   {cart.map((item) => (
                     <CartItem
-                      key={item.id}
+                      key={item.cartLineId}
                       item={item}
-                      availableStock={getAvailableStock(item.id, item.quantity)}
+                      maxLineQty={getMaxQtyForCartLine(item, cart, productsById.get(item.id))}
                       onUpdateQuantity={updateCartItemQuantity}
                       onRemove={removeFromCart}
                       colors={colors}

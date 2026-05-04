@@ -271,6 +271,7 @@ export async function initializeDatabase() {
         quantity INTEGER NOT NULL DEFAULT 0,
         initial_quantity INTEGER NOT NULL DEFAULT 0,
         unit_cost REAL NOT NULL DEFAULT 0.00,
+        unit_price REAL,
         expiry_date DATETIME,
         received_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         source_type TEXT,
@@ -290,6 +291,7 @@ export async function initializeDatabase() {
       { name: 'supplier_id', sql: `ALTER TABLE inventory_batches ADD COLUMN supplier_id TEXT;` },
       { name: 'notes', sql: `ALTER TABLE inventory_batches ADD COLUMN notes TEXT;` },
       { name: 'storage_location', sql: `ALTER TABLE inventory_batches ADD COLUMN storage_location TEXT;` },
+      { name: 'unit_price', sql: `ALTER TABLE inventory_batches ADD COLUMN unit_price REAL;` },
     ];
     for (const col of inventoryBatchCompatibilityColumns) {
       try {
@@ -300,6 +302,17 @@ export async function initializeDatabase() {
           console.error(`Error adding ${col.name} column to inventory_batches:`, e);
         }
       }
+    }
+
+    try {
+      db.exec(`
+        UPDATE inventory_batches SET unit_price = (
+          SELECT CAST(p.price AS REAL) FROM products p WHERE p.id = inventory_batches.product_id
+        )
+        WHERE unit_price IS NULL
+      `);
+    } catch (e) {
+      console.warn('inventory_batches unit_price backfill skipped:', e.message);
     }
 
     // Notifications table for batch expiry alerts (and future notification types)
