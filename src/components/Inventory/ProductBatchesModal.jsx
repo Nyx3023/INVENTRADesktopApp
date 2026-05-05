@@ -8,6 +8,7 @@ import {
   ArrowPathIcon,
   ExclamationTriangleIcon,
   ClipboardDocumentListIcon,
+  CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 import { useTheme } from '../../context/ThemeContext';
 import { inventoryBatchService } from '../../services/api';
@@ -58,12 +59,34 @@ const ProductBatchesModal = ({ product, onClose, onChanged }) => {
   }, [onClose, showForm, confirmDelete]);
 
   const sortedBatches = useMemo(() => {
+    // Match backend deduction order (see server deductInventoryBatches):
+    // 1) non-null expiry first, earliest expiry first (FEFO),
+    // 2) then received_date oldest first,
+    // 3) then id for deterministic tie-break.
     return [...batches].sort((a, b) => {
-      const aD = a.expiryDate ? new Date(a.expiryDate).getTime() : Number.POSITIVE_INFINITY;
-      const bD = b.expiryDate ? new Date(b.expiryDate).getTime() : Number.POSITIVE_INFINITY;
-      return aD - bD;
+      const aExpiryMissing = !a.expiryDate || a.expiryDate === '';
+      const bExpiryMissing = !b.expiryDate || b.expiryDate === '';
+      if (aExpiryMissing !== bExpiryMissing) return aExpiryMissing ? 1 : -1;
+
+      const aExp = a.expiryDate ? new Date(a.expiryDate).getTime() : Number.POSITIVE_INFINITY;
+      const bExp = b.expiryDate ? new Date(b.expiryDate).getTime() : Number.POSITIVE_INFINITY;
+      if (aExp !== bExp) return aExp - bExp;
+
+      const aRec = a.receivedDate ? new Date(a.receivedDate).getTime() : Number.POSITIVE_INFINITY;
+      const bRec = b.receivedDate ? new Date(b.receivedDate).getTime() : Number.POSITIVE_INFINITY;
+      if (aRec !== bRec) return aRec - bRec;
+
+      const aId = String(a.id || '');
+      const bId = String(b.id || '');
+      return aId.localeCompare(bId);
     });
   }, [batches]);
+
+  const posDeductionQueue = useMemo(() => {
+    return sortedBatches.filter((b) => (Number(b.quantity) || 0) > 0 && b.status !== 'depleted');
+  }, [sortedBatches]);
+
+  const nextDeductionBatchId = posDeductionQueue[0]?.id || null;
 
   const totals = useMemo(() => {
     const active = batches.filter((b) => b.status !== 'depleted' && (b.quantity || 0) > 0);
@@ -204,8 +227,24 @@ const ProductBatchesModal = ({ product, onClose, onChanged }) => {
                       const ds = getBatchDisplayStatus(batch);
                       const cfg = BATCH_STATUS_CONFIG[ds] || BATCH_STATUS_CONFIG.active;
                       const days = getDaysUntilExpiry(batch.expiryDate);
+                      const queueIndex = posDeductionQueue.findIndex((b) => b.id === batch.id);
+                      const isNextDeduction = batch.id === nextDeductionBatchId;
+                      const isReadyInWarehouse = queueIndex > 0 && ds === 'active';
+                      const statusLabel = isNextDeduction ? 'Active' : isReadyInWarehouse ? 'Ready' : cfg.label;
+                      const statusBadgeClass = isNextDeduction
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700'
+                        : isReadyInWarehouse
+                          ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-700'
+                          : cfg.badge;
                       return (
-                        <tr key={batch.id} className={`hover:${colors.bg.secondary} transition-colors`}>
+                        <tr
+                          key={batch.id}
+                          className={`transition-colors ${
+                            isNextDeduction
+                              ? 'bg-emerald-50 dark:bg-emerald-900/20'
+                              : `hover:${colors.bg.secondary}`
+                          }`}
+                        >
                           <td className={`px-4 py-3 whitespace-nowrap text-sm font-mono ${colors.text.primary}`}>
                             {batch.batchNumber || (
                               <span className={`italic ${colors.text.tertiary}`}>{batch.id.slice(0, 8)}</span>
@@ -235,9 +274,13 @@ const ProductBatchesModal = ({ product, onClose, onChanged }) => {
                             )}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full ${cfg.badge}`}>
-                              <span className={`inline-block w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                              {cfg.label}
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full ${statusBadgeClass}`}>
+                              {isNextDeduction ? (
+                                <CheckCircleIcon className="h-3.5 w-3.5" />
+                              ) : (
+                                <span className={`inline-block w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                              )}
+                              {statusLabel}
                             </span>
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-right">

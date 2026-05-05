@@ -3,3 +3,5 @@ data/
 release/
 dist/
 ThesisPOS-Portable/
+database-electron/
+backups/

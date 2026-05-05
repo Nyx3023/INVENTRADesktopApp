@@ -2920,17 +2920,61 @@ app.post('/api/stock-adjustments', async (req, res) => {
         ]
       );
 
-      // Update product quantity
+      // Update inventory batches based on adjustment delta.
+      // Important: Stock adjustments should NOT create a new batch when a product
+      // already has tracked batches. Positive adjustments top-up an existing
+      // batch (priority/active queue) to avoid fragmenting inventory into many
+      // tiny adjustment batches.
       if (quantityChange > 0) {
-        addInventoryBatch(connection, {
-          productId,
-          quantity: quantityChange,
-          batchNumber: normalizedBatchNumber,
-          expiryDate: normalizedExpiryDate,
-          unitCost: product.cost || 0,
-          sourceType: adjustmentType || 'correction',
-          sourceId: adjustmentId,
-        });
+        const [existingBatches] = connection.execute(
+          `SELECT id, batch_number, quantity, initial_quantity, expiry_date
+           FROM inventory_batches
+           WHERE product_id = ?
+           ORDER BY
+             CASE WHEN expiry_date IS NULL OR expiry_date = '' THEN 1 ELSE 0 END,
+             expiry_date ASC,
+             received_date ASC,
+             id ASC`,
+          [productId]
+        );
+
+        let targetBatch = null;
+
+        if (normalizedBatchNumber) {
+          targetBatch = (existingBatches || []).find(
+            (b) => normalizeOptionalText(b.batch_number) === normalizedBatchNumber
+          ) || null;
+        }
+
+        if (!targetBatch && Array.isArray(existingBatches) && existingBatches.length > 0) {
+          // Default target: first in POS deduction priority (FEFO/FIFO).
+          targetBatch = existingBatches[0];
+        }
+
+        if (targetBatch) {
+          const nextQty = (Number(targetBatch.quantity) || 0) + quantityChange;
+          const nextInitialQty = (Number(targetBatch.initial_quantity) || 0) + quantityChange;
+          connection.execute(
+            `UPDATE inventory_batches
+             SET quantity = ?,
+                 initial_quantity = ?,
+                 status = 'active',
+                 updated_at = datetime('now')
+             WHERE id = ?`,
+            [nextQty, nextInitialQty, targetBatch.id]
+          );
+        } else {
+          // Fallback for legacy products with no batch rows yet.
+          addInventoryBatch(connection, {
+            productId,
+            quantity: quantityChange,
+            batchNumber: normalizedBatchNumber,
+            expiryDate: normalizedExpiryDate,
+            unitCost: product.cost || 0,
+            sourceType: adjustmentType || 'correction',
+            sourceId: adjustmentId,
+          });
+        }
       } else if (quantityChange < 0) {
         deductInventoryBatches(connection, { productId, quantity: Math.abs(quantityChange) });
       }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { Fragment, useEffect, useMemo, useState, useRef } from 'react';
 import { useTheme } from '../../context/ThemeContext';
 import { inventoryBatchService, productService } from '../../services/api';
 import { formatCurrency, formatDate } from '../../utils/formatters';
@@ -18,6 +18,9 @@ import {
   XMarkIcon,
   RectangleStackIcon,
   AdjustmentsHorizontalIcon,
+  Squares2X2Icon,
+  QueueListIcon,
+  CubeIcon,
 } from '@heroicons/react/24/outline';
 import LazyPageLoader from '../common/LazyPageLoader';
 import { exportToCSV } from '../../utils/exportUtils';
@@ -54,7 +57,9 @@ const BatchManagementScreen = () => {
   const [expiryTo, setExpiryTo] = useState('');
   const [sortOrder, setSortOrder] = useState('expiry_asc'); // default: nearest expiry first
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 15;
+  const [itemsPerPage, setItemsPerPage] = useState(15);
+  const [viewMode, setViewMode] = useState('products'); // products | batches
+  const [expandedProductIds, setExpandedProductIds] = useState(() => new Set());
 
   // Modals
   const [showForm, setShowForm] = useState(false);
@@ -159,10 +164,64 @@ const BatchManagementScreen = () => {
     } catch (_) { /* no-op */ }
   }, [highlightedBatchId, batches]);
 
-  const totalPages = Math.max(1, Math.ceil(batches.length / itemsPerPage));
+  const groupedProducts = useMemo(() => {
+    const byProduct = new Map();
+    for (const batch of batches) {
+      const productId = batch.productId || `unknown-${batch.id}`;
+      if (!byProduct.has(productId)) {
+        byProduct.set(productId, {
+          productId,
+          productName: batch.productName || 'Unknown Product',
+          categoryName: batch.categoryName || 'Uncategorized',
+          batches: [],
+          totalQuantity: 0,
+          activeBatchCount: 0,
+          earliestExpiry: null,
+          statusCounts: { active: 0, near_expiry: 0, critical: 0, expired: 0, depleted: 0 },
+        });
+      }
+      const group = byProduct.get(productId);
+      const ds = getBatchDisplayStatus(batch);
+      group.batches.push(batch);
+      group.totalQuantity += Number(batch.quantity) || 0;
+      if ((Number(batch.quantity) || 0) > 0 && ds !== 'depleted') {
+        group.activeBatchCount += 1;
+      }
+      group.statusCounts[ds] = (group.statusCounts[ds] || 0) + 1;
+      if (batch.expiryDate) {
+        const e = new Date(batch.expiryDate);
+        if (!Number.isNaN(e.getTime()) && (!group.earliestExpiry || e < group.earliestExpiry)) {
+          group.earliestExpiry = e;
+        }
+      }
+    }
+
+    return Array.from(byProduct.values())
+      .map((group) => ({
+        ...group,
+        batches: [...group.batches].sort((a, b) => {
+          const ae = a.expiryDate ? new Date(a.expiryDate).getTime() : Number.MAX_SAFE_INTEGER;
+          const be = b.expiryDate ? new Date(b.expiryDate).getTime() : Number.MAX_SAFE_INTEGER;
+          if (ae !== be) return ae - be;
+          const ar = a.receivedDate ? new Date(a.receivedDate).getTime() : 0;
+          const br = b.receivedDate ? new Date(b.receivedDate).getTime() : 0;
+          return ar - br;
+        }),
+      }))
+      .sort((a, b) => a.productName.localeCompare(b.productName));
+  }, [batches]);
+
+  const listItems = viewMode === 'products' ? groupedProducts : batches;
+  const computedTotalPages = Math.max(1, Math.ceil(listItems.length / itemsPerPage));
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
   const paginatedBatches = useMemo(
-    () => batches.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage),
-    [batches, currentPage]
+    () => batches.slice(startIndex, endIndex),
+    [batches, startIndex, endIndex]
+  );
+  const paginatedProducts = useMemo(
+    () => groupedProducts.slice(startIndex, endIndex),
+    [groupedProducts, startIndex, endIndex]
   );
 
   const activeFilterCount = useMemo(() => {
@@ -198,6 +257,19 @@ const BatchManagementScreen = () => {
     setExpiryFrom('');
     setExpiryTo('');
     setSortOrder('expiry_asc');
+  };
+
+  const toggleProductExpansion = (productId) => {
+    setExpandedProductIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  };
+
+  const goToPage = (page) => {
+    setCurrentPage(Math.max(1, Math.min(page, computedTotalPages)));
   };
 
   const toggleExpirySort = () => {
@@ -254,6 +326,38 @@ const BatchManagementScreen = () => {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <div className={`inline-flex rounded-xl border ${colors.border.primary} overflow-hidden`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('products');
+                  setCurrentPage(1);
+                }}
+                className={`px-3 py-2.5 text-sm font-medium inline-flex items-center gap-1.5 ${
+                  viewMode === 'products'
+                    ? 'bg-blue-600 text-white'
+                    : `${colors.bg.secondary} ${colors.text.secondary} hover:${colors.bg.tertiary}`
+                }`}
+              >
+                <Squares2X2Icon className="h-4 w-4" />
+                Products
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('batches');
+                  setCurrentPage(1);
+                }}
+                className={`px-3 py-2.5 text-sm font-medium inline-flex items-center gap-1.5 ${
+                  viewMode === 'batches'
+                    ? 'bg-blue-600 text-white'
+                    : `${colors.bg.secondary} ${colors.text.secondary} hover:${colors.bg.tertiary}`
+                }`}
+              >
+                <QueueListIcon className="h-4 w-4" />
+                Batches
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -503,9 +607,60 @@ const BatchManagementScreen = () => {
         </ModalPortal>
       )}
 
+      {/* Quick search */}
+      <div className={`${colors.card.primary} rounded-2xl shadow-sm border ${colors.border.primary} p-4`}>
+        <div className="relative">
+          <MagnifyingGlassIcon className={`absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 ${colors.text.tertiary}`} />
+          <input
+            type="text"
+            placeholder={viewMode === 'products' ? 'Search products...' : 'Search products, batch #, ID...'}
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setCurrentPage(1);
+            }}
+            className={`w-full pl-10 pr-10 py-2.5 rounded-xl border text-sm ${colors.input.primary}`}
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              className={`absolute right-3 top-1/2 -translate-y-1/2 ${colors.text.tertiary} hover:text-red-500`}
+              aria-label="Clear search"
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Table */}
       <div className={`${colors.card.primary} rounded-2xl shadow-sm border ${colors.border.primary} overflow-hidden`}>
+        <div className={`px-4 py-3 border-b ${colors.border.primary} flex flex-wrap items-center justify-between gap-3`}>
+          <div className={`text-sm ${colors.text.secondary}`}>
+            {viewMode === 'products'
+              ? `${groupedProducts.length} products with batches`
+              : `${batches.length} total batches`}
+          </div>
+          <div className="flex items-center gap-2">
+            <label className={`text-sm ${colors.text.secondary}`}>Rows:</label>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setCurrentPage(1);
+                setItemsPerPage(Number(e.target.value));
+              }}
+              className={`border rounded-lg px-2 py-1.5 text-sm ${colors.input.primary}`}
+            >
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
+          </div>
+        </div>
         <div className="overflow-x-auto">
+          {viewMode === 'batches' ? (
           <table className={`min-w-full divide-y ${colors.border.primary}`}>
             <thead className={`${colors.bg.secondary}`}>
               <tr>
@@ -617,30 +772,206 @@ const BatchManagementScreen = () => {
               )}
             </tbody>
           </table>
+          ) : (
+            <table className={`min-w-full divide-y ${colors.border.primary}`}>
+              <thead className={`${colors.bg.secondary}`}>
+                <tr>
+                  <th className={`px-4 py-3 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>Product</th>
+                  <th className={`px-4 py-3 text-right text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>Total Qty</th>
+                  <th className={`px-4 py-3 text-right text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>Batch Count</th>
+                  <th className={`px-4 py-3 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>Nearest Expiry</th>
+                  <th className={`px-4 py-3 text-left text-xs font-medium ${colors.text.secondary} uppercase tracking-wider`}>Status Mix</th>
+                </tr>
+              </thead>
+              <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
+                {paginatedProducts.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" className={`px-6 py-10 text-center text-sm ${colors.text.tertiary}`}>
+                      No products match your filters.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedProducts.map((group) => {
+                    const isOpen = expandedProductIds.has(group.productId);
+                    const activeStatuses = Object.entries(group.statusCounts)
+                      .filter(([, count]) => count > 0)
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 3);
+                    return (
+                      <Fragment key={group.productId}>
+                        <tr
+                          onClick={() => toggleProductExpansion(group.productId)}
+                          className={`cursor-pointer hover:${colors.bg.secondary}`}
+                        >
+                          <td className={`px-4 py-3 text-sm ${colors.text.primary}`}>
+                            <div className="flex items-center gap-2">
+                              <CubeIcon className="h-4 w-4 text-blue-500" />
+                              <div>
+                                <p className="font-medium">{group.productName}</p>
+                                <p className={`text-xs ${colors.text.tertiary}`}>{group.categoryName}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className={`px-4 py-3 text-right text-sm font-semibold ${colors.text.primary}`}>{group.totalQuantity}</td>
+                          <td className={`px-4 py-3 text-right text-sm ${colors.text.secondary}`}>{group.batches.length}</td>
+                          <td className={`px-4 py-3 text-sm ${colors.text.secondary}`}>
+                            {group.earliestExpiry ? formatDate(group.earliestExpiry.toISOString()) : 'No expiry'}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-1.5">
+                              {activeStatuses.map(([status, count]) => {
+                                const cfg = BATCH_STATUS_CONFIG[status] || BATCH_STATUS_CONFIG.active;
+                                return (
+                                  <span key={status} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cfg.badge}`}>
+                                    {cfg.label} {count}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr className={`${colors.bg.secondary}`}>
+                            <td colSpan="5" className="px-4 py-3">
+                              <div className={`rounded-xl border ${colors.border.primary} overflow-hidden ${colors.card.primary}`}>
+                                <table className={`min-w-full divide-y ${colors.border.primary}`}>
+                                  <thead className={`${colors.bg.secondary}`}>
+                                    <tr>
+                                      <th className={`px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider ${colors.text.secondary}`}>Batch</th>
+                                      <th className={`px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wider ${colors.text.secondary}`}>Qty</th>
+                                      <th className={`px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider ${colors.text.secondary}`}>Received</th>
+                                      <th className={`px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider ${colors.text.secondary}`}>Expiry</th>
+                                      <th className={`px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider ${colors.text.secondary}`}>Status</th>
+                                      <th className={`px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wider ${colors.text.secondary}`}>Actions</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className={`${colors.card.primary} divide-y ${colors.border.primary}`}>
+                                    {group.batches.map((batch) => {
+                                      const ds = getBatchDisplayStatus(batch);
+                                      const cfg = BATCH_STATUS_CONFIG[ds] || BATCH_STATUS_CONFIG.active;
+                                      return (
+                                        <tr key={batch.id}>
+                                          <td className={`px-3 py-2 text-sm font-mono ${colors.text.primary}`}>{batch.batchNumber || batch.id.slice(0, 8)}</td>
+                                          <td className={`px-3 py-2 text-sm text-right ${colors.text.primary}`}>{batch.quantity}</td>
+                                          <td className={`px-3 py-2 text-sm ${colors.text.secondary}`}>{batch.receivedDate ? formatDate(batch.receivedDate) : '—'}</td>
+                                          <td className={`px-3 py-2 text-sm ${colors.text.secondary}`}>{batch.expiryDate ? formatDate(batch.expiryDate) : 'N/A'}</td>
+                                          <td className="px-3 py-2">
+                                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cfg.badge}`}>
+                                              <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                                              {cfg.label}
+                                            </span>
+                                          </td>
+                                          <td className="px-3 py-2 text-right">
+                                            <div className="flex items-center justify-end gap-1.5">
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleEdit(batch);
+                                                }}
+                                                className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
+                                                title="Edit batch"
+                                              >
+                                                <PencilIcon className="h-4 w-4" />
+                                              </button>
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleDelete(batch);
+                                                }}
+                                                className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
+                                                title="Delete batch"
+                                              >
+                                                <TrashIcon className="h-4 w-4" />
+                                              </button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Pagination */}
-        {totalPages > 1 && (
+        {computedTotalPages > 1 && (
           <div className={`px-6 py-4 border-t ${colors.border.primary} flex items-center justify-between`}>
             <div className={`text-sm ${colors.text.secondary}`}>
-              Showing {((currentPage - 1) * itemsPerPage) + 1} to{' '}
-              {Math.min(currentPage * itemsPerPage, batches.length)} of {batches.length} batches
+              {listItems.length === 0
+                ? `Showing 0 of 0 ${viewMode}`
+                : `Showing ${startIndex + 1} to ${Math.min(endIndex, listItems.length)} of ${listItems.length} ${viewMode === 'products' ? 'products' : 'batches'}`}
             </div>
             <div className="flex items-center space-x-2">
               <button
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                onClick={() => goToPage(currentPage - 1)}
                 disabled={currentPage === 1}
-                className={`p-2 rounded-lg transition-colors ${currentPage === 1 ? 'opacity-50 cursor-not-allowed' : `hover:${colors.bg.secondary}`}`}
+                className={`px-3 py-2 rounded-lg transition-all duration-200 ${currentPage === 1 ? `${colors.text.tertiary} cursor-not-allowed opacity-50` : `${colors.text.secondary} hover:${colors.bg.secondary}`}`}
               >
                 <ChevronLeftIcon className="h-5 w-5" />
               </button>
-              <div className={`text-sm font-medium ${colors.text.primary}`}>
-                Page {currentPage} of {totalPages}
-              </div>
+              {(() => {
+                const pageNumbers = [];
+                const maxVisiblePages = 5;
+                let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+                let endPage = Math.min(computedTotalPages, startPage + maxVisiblePages - 1);
+
+                if (endPage - startPage < maxVisiblePages - 1) {
+                  startPage = Math.max(1, endPage - maxVisiblePages + 1);
+                }
+
+                if (startPage > 1) {
+                  pageNumbers.push(
+                    <button
+                      key={1}
+                      onClick={() => goToPage(1)}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${colors.text.secondary} hover:${colors.bg.secondary}`}
+                    >
+                      1
+                    </button>
+                  );
+                  if (startPage > 2) pageNumbers.push(<span key="ellipsis1" className={`px-2 ${colors.text.tertiary}`}>...</span>);
+                }
+
+                for (let i = startPage; i <= endPage; i++) {
+                  pageNumbers.push(
+                    <button
+                      key={i}
+                      onClick={() => goToPage(i)}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${currentPage === i ? 'bg-blue-600 text-white shadow-md' : `${colors.text.secondary} hover:${colors.bg.secondary}`}`}
+                    >
+                      {i}
+                    </button>
+                  );
+                }
+
+                if (endPage < computedTotalPages) {
+                  if (endPage < computedTotalPages - 1) pageNumbers.push(<span key="ellipsis2" className={`px-2 ${colors.text.tertiary}`}>...</span>);
+                  pageNumbers.push(
+                    <button
+                      key={computedTotalPages}
+                      onClick={() => goToPage(computedTotalPages)}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${colors.text.secondary} hover:${colors.bg.secondary}`}
+                    >
+                      {computedTotalPages}
+                    </button>
+                  );
+                }
+                return pageNumbers;
+              })()}
               <button
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-                className={`p-2 rounded-lg transition-colors ${currentPage === totalPages ? 'opacity-50 cursor-not-allowed' : `hover:${colors.bg.secondary}`}`}
+                onClick={() => goToPage(currentPage + 1)}
+                disabled={currentPage === computedTotalPages}
+                className={`px-3 py-2 rounded-lg transition-all duration-200 ${currentPage === computedTotalPages ? `${colors.text.tertiary} cursor-not-allowed opacity-50` : `${colors.text.secondary} hover:${colors.bg.secondary}`}`}
               >
                 <ChevronRightIcon className="h-5 w-5" />
               </button>

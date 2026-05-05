@@ -960,14 +960,14 @@ const InventoryScreen = () => {
           </div>
 
           {(product.batchNumber || product.expiryDate) && (
-            <div className={`mb-4 p-3 rounded-lg ${colors.bg.secondary} text-xs ${colors.text.secondary} space-y-1`}>
+            <div className={`mb-4 p-3 rounded-lg ${colors.bg.secondary} text-xs ${colors.text.secondary} space-y-1 xl:hidden`}>
               {product.batchNumber && <p>Batch: <span className={colors.text.primary}>{product.batchNumber}</span></p>}
               {product.expiryDate && <p>Expires: <span className={colors.text.primary}>{new Date(product.expiryDate).toLocaleDateString()}</span></p>}
             </div>
           )}
 
           {/* Barcode - Always takes up space for consistency */}
-          <div className={`mb-4 p-3 rounded-lg min-h-[3.25rem] flex flex-col justify-center ${product.barcode ? colors.bg.secondary : 'transparent'
+          <div className={`mb-4 p-3 rounded-lg min-h-[3.25rem] flex flex-col justify-center xl:hidden ${product.barcode ? colors.bg.secondary : 'transparent'
             }`}>
             {product.barcode ? (
               <>
